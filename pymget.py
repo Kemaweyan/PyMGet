@@ -8,7 +8,7 @@ from collections import deque
 import time
 import struct
 
-VERSION = '1.04'
+VERSION = '1.05'
 
 start_msg = '\nPyMGet v{}\n'
 
@@ -19,6 +19,8 @@ connection_error = '\nОшибка: не удалось соединиться �
 no_partial_error = '\nОшибка: сервер {} не поддерживает скачивание по частям.\n\n'
 http_error = '\nОшибка: неверный ответ сервера. Код {}\n\n'
 filesize_error = '\nОшибка: размер файла на сервере {} {} байт отличается\nот полученного ранее {} байт.\n\n'
+
+other_filename_warning = '\nВнимание: имя файла на зеркале {} отличается от {}. Возможно, этот файл содержит другие данные.'
 
 
 
@@ -94,17 +96,41 @@ class Part:
 
 class ConnectionThread(threading.Thread):
 
-    def __init__(self, host, timeout, port=80):
+    def connect(url, timeout):
+        if url.lower().startswith('http:'):
+            return HTTPThread(url, timeout)
+        if url.lower().startswith('https:'):
+            return HTTPSThread(url, timeout)
+
+    def __init__(self, url, port, timeout):
         threading.Thread.__init__(self)
+        url_parts = url.split('/', 3)
+        host = url_parts[2]
+        self.request = '/' + url_parts[3]
+        if ':' in host:
+            self.host, port = host.split(':')
+            self.port = int(port)
+        else:
+            self.host = host
+            self.port = port
         self.timeout = timeout
-        self.host = host
-        self.port = port
         self.ready = threading.Event()
 
     def run(self):
-        self.conn = client.HTTPConnection(self.host, self.port, timeout=self.timeout)
+        self.conn = self.protocol(self.host, self.port, timeout=self.timeout)
         self.ready.set()
 
+class HTTPThread(ConnectionThread):
+
+    def __init__(self, url, timeout):
+        ConnectionThread.__init__(self, url, 80, timeout)
+        self.protocol = client.HTTPConnection
+
+class HTTPSThread(ConnectionThread):
+
+    def __init__(self, url, timeout):
+        ConnectionThread.__init__(self, url, 443, timeout)
+        self.protocol = client.HTTPSConnection
 
 
 
@@ -148,18 +174,12 @@ class DownloadThread(threading.Thread):
 
 class Mirror:
 
-    def __init__(self, host, request, block_size, timeout):
+    def __init__(self, url, block_size, timeout):
+        self.thread = ConnectionThread.connect(url, timeout)
         self.block_size = block_size
-        self.timeout = timeout
-        self.name = host
-        if ':' in self.name:
-            self.host, port = self.name.split(':')
-            self.port = int(port)
-        else:
-            self.host = self.name
-            self.port = 80
-        self.request = request
-        self.thread = ConnectionThread(self.host, self.timeout, self.port)
+        self.name = self.thread.host
+        self.request = self.thread.request
+        self.filename = self.thread.request.split('/')[-1]
         self.thread.start()
 
     def wait_connection(self):
@@ -222,21 +242,25 @@ class Manager:
     data_queue = queue.Queue()
 
     def __init__(self, urls, block_size, filename, timeout):
+        self.block_size = block_size
+        self.console = Console(ProgressBar())
+
+        url_filename = ''
+        self.mirrors = {}
+        for url in urls:
+            mirror = Mirror(url, self.block_size, timeout)
+            self.mirrors[mirror.name] = mirror
+            if url_filename == '':
+                url_filename = mirror.filename
+            elif url_filename != mirror.filename:
+                self.console.out(other_filename_warning.format(mirror.name, mirror.filename))
+
         if filename is None:
-            self.filename = urls[0].split('/')[-1]
+            self.filename = url_filename
             if self.filename == '':
                 self.filename = 'out'
         else:
             self.filename = filename
-
-        self.block_size = block_size
-
-        self.mirrors = {}
-        for url in urls:
-            url_parts = url.split('/', 3)
-            host = url_parts[2]
-            request = '/' + url_parts[3]
-            self.mirrors[host] = Mirror(host, request, self.block_size, timeout)
 
     def download(self):
         statefile = StateFile(self.filename)
@@ -248,16 +272,13 @@ class Manager:
         wait_mirrors = self.mirrors.copy()
         speeds = {}
 
-        progress = ProgressBar()
-        console = Console(progress)
-
         while len(wait_mirrors) > 0:
             remain_mirrors = {}
             for name, mirror in wait_mirrors.items():
                 if not mirror.wait_connection():
                     remain_mirrors[name] = wait_mirrors[name]
                 else:
-                    console.out(connected_msg.format(name))
+                    self.console.out(connected_msg.format(name))
             wait_mirrors = remain_mirrors
         print()
 
@@ -277,10 +298,10 @@ class Manager:
 
                     if file_size == 0:
                         file_size = part.file_size
-                        progress.total = file_size
+                        self.console.progressbar.total = file_size
                         outfile.seek(part.file_size - 1, 0)
                         outfile.write(b'\x00')
-                        console.out(downloading_msg.format(self.filename, part.file_size, calc_units(part.file_size)))
+                        self.console.out(downloading_msg.format(self.filename, part.file_size, calc_units(part.file_size)))
 
                     assert file_size == part.file_size, filesize_error.format(part.name, part.file_size, file_size)
 
@@ -295,7 +316,7 @@ class Manager:
 
                     speed = size / mirror.thread.time
                     speeds[part.name] = speed
-                    console.progress(written_bytes, sum(speeds.values()))
+                    self.console.progress(written_bytes, sum(speeds.values()))
 
                     if len(failed_parts) > 0:
                         new_part = failed_parts.popleft()
@@ -307,7 +328,7 @@ class Manager:
                         begin += self.block_size
 
                 except AssertionError as e:
-                    console.out(str(e))
+                    self.console.out(str(e))
                     failed_parts.append(part.begin)
                     self.mirrors[part.name].thread.join()
                     self.mirrors[part.name].close()
@@ -343,7 +364,10 @@ if __name__ == '__main__':
     if '-b' in sys.argv:
         i = sys.argv.index('-b') + 1
         block_size = sys.argv[i]
-        block_size = int(block_size[:-1]) * {'k': 2**10, 'M': 2**20}[block_size[-1:]]
+        if block_size.isdigit():
+            block_size = int(block_size)
+        else:
+            block_size = int(block_size[:-1]) * {'k': 2**10, 'M': 2**20}[block_size[-1:]]
 
     if '-o' in sys.argv:
         i = sys.argv.index('-o') + 1
@@ -360,7 +384,7 @@ if __name__ == '__main__':
                 urls.append(link.strip('\r\n'))
 
     for arg in sys.argv:
-        if arg.startswith('http://'):
+        if arg.startswith('http://') or arg.startswith('https://'):
             urls.append(arg)
 
     manager = Manager(urls, block_size, filename, timeout)
