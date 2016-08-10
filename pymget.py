@@ -7,22 +7,31 @@ from http import client
 from collections import deque
 import time
 import struct
+import re
 
-VERSION = '1.07'
+VERSION = '1.08'
 
 start_msg = '\nPyMGet v{}\n'
 
+error_msg = '\nОшибка: '
+warning_msg = '\nВнимание: '
+
 connected_msg = 'Соединение с сервером {} OK'
-downloading_msg = '\nПолучение файла {} {} байт ({}):\n\n'
+downloading_msg = '\nПолучение файла {} {} байт ({}):'
 redirect_msg = '\nПеренаправление с зеркала {} по адресу {}'
 
-connection_error = '\nОшибка: не удалось соединиться с сервером {}\n\n'
-no_partial_error = '\nОшибка: сервер {} не поддерживает скачивание по частям.\n\n'
-http_error = '\nОшибка: неверный ответ сервера. Код {}\n\n'
-filesize_error = '\nОшибка: размер файла на сервере {} {} байт отличается\nот полученного ранее {} байт.\n\n'
+connection_error = 'не удалось соединиться с сервером {}'
+no_partial_error = 'сервер {} не поддерживает скачивание по частям.'
+http_error = 'неверный ответ сервера. Код {}'
+filesize_error = 'размер файла на сервере {} {} байт отличается\nот полученного ранее {} байт.'
+download_impossible_error = 'невозможно скачать файл.'
+wrong_commandline_error = 'неверный аргумент командной строки. '
+arg_needs_param_error = "Аргумент '{}' требует указания параметра."
+wrong_param_format_error = "Неверный формат параметра '{}': {}"
+file_not_found_error = "Файл '{}' не найден."
 
-empty_filename_warning = '\nВнимание: невозможно определить имя файла на зеркале {}. Возможно, это другой файл.'
-other_filename_warning = '\nВнимание: имя файла на зеркале {} отличается от {}. Возможно, это другой файл.'
+empty_filename_warning = 'невозможно определить имя файла на зеркале {}. Возможно, это другой файл.'
+other_filename_warning = 'имя файла на зеркале {} отличается от {}. Возможно, это другой файл.'
 
 anyway_download_question = 'Всё равно использовать зеркало {}? (да/Нет):'
 
@@ -87,7 +96,15 @@ class Console:
         print(text, end=end)
         self.newline = '\n' in end or text.endswith('\n')
 
+    def error(self, text, end='\n'):
+        self.out(error_msg + text, end)
+
+    def warning(self, text, end='\n'):
+        self.out(warning_msg + text, end)
+
     def progress(self, complete, speed):
+        if self.newline:
+            print()
         self.newline = False
         self.progressbar.update(complete, speed)
 
@@ -293,6 +310,8 @@ class Context:
 
 
 
+class DownloadError(Exception): pass
+
 class Manager:
 
     data_queue = queue.Queue()
@@ -320,13 +339,13 @@ class Manager:
     def check_filename(self, mirror):
         if self.filename == '':
             if mirror.filename == '':
-                self.console.out(empty_filename_warning.format(mirror.name))
+                self.console.warning(empty_filename_warning.format(mirror.name))
                 return self.console.ask(anyway_download_question.format(mirror.name), False)
             self.filename = mirror.filename
             return True
         if self.filename == mirror.filename:
             return True
-        self.console.out(other_filename_warning.format(mirror.name, self.filename))
+        self.console.warning(other_filename_warning.format(mirror.name, self.filename))
         return self.console.ask(anyway_download_question.format(mirror.name), False)
 
     def wait_connections(self):
@@ -394,7 +413,7 @@ class Manager:
                         self.give_task(mirror)
 
                     except AssertionError as e:
-                        self.console.out(str(e))
+                        self.console.error(str(e))
                         raise
                     except MirrorRedirect as e:
                         self.console.out(redirect_msg.format(part.name, e.location))
@@ -407,7 +426,7 @@ class Manager:
                     mirror.close()
                     del self.active_mirrors[part.name]
                     if not self.active_mirrors and not self.wait_mirrors:
-                        return 1
+                        raise DownloadError
                 finally:
                     self.parts_in_progress.remove(part.offset)
                     needle_parts = self.parts_in_progress.copy()
@@ -420,46 +439,129 @@ class Manager:
             print()
 
         self.context.delete()
-        return 0
+
+
+
+
+class CommandLineError(Exception): pass
+
+class CommandLine:
+
+    def __init__(self, argv):
+        self.argv = argv[1:]
+        self.block_size = 2**20
+        self.filename = ''
+        self.timeout = 10
+        self.urls = []
+
+    def get_arg(self, arg):
+        if arg in self.argv:
+            index = self.argv.index(arg)
+            del self.argv[index]
+            return index
+        return None
+
+    def get_param(self, arg):
+        index = self.get_arg(arg)
+        if not index is None:
+            try:
+                param = self.argv[index]
+                del self.argv[index]
+                return param
+            except:
+                raise CommandLineError(wrong_commandline_error + arg_needs_param_error.format(arg))
+        return None
+
+    def get_long_param(self, arg):
+        parts = arg.split('=')
+        if len(parts) < 2:
+            raise CommandLineError(wrong_commandline_error + arg_needs_param_error.format(parts[0]))
+        return parts[1]
+
+    def parse_block_size(self, block_size):
+        bs_re = re.compile('(\d+)(\w)?')
+        matches = bs_re.match(block_size)
+        if not matches:
+            raise CommandLineError(wrong_commandline_error + wrong_param_format_error.format('block size', block_size))
+        self.block_size = int(matches.group(1))
+        if matches.group(2):
+            if matches.group(2).lower() == 'k':
+                self.block_size *= 2**10
+            elif matches.group(2).lower() == 'm':
+                self.block_size *= 2**20
+            else:
+                raise CommandLineError(wrong_commandline_error + wrong_param_format_error.format('block size', block_size))
+
+    def parse_timeout(self, timeout):
+        if not timeout.isdigit():
+            raise CommandLineError(wrong_commandline_error + wrong_param_format_error.format('timeout', timeout))
+        self.timeout = int(timeout)
+
+    def parse_filename(self, filename):
+        self.filename = filename
+
+    def parse_urls(self, urls_file):
+        try:
+            with open(urls_file, 'r') as links:
+                for link in links:
+                    self.urls.append(link.strip('\r\n'))
+        except:
+            raise CommandLineError(file_not_found_error.format(urls_file))
+
+    def parse_long_args(self):
+        remain_args = []
+        for arg in self.argv:
+            if arg.startswith('--block-size'):
+                block_size = self.get_long_param(arg)
+                self.parse_block_size(block_size)
+            elif arg.startswith('--timeout'):
+                timeout = self.get_long_param(arg)
+                self.parse_timeout(timeout)
+            elif arg.startswith('--out-file'):
+                filename = self.get_long_param(arg)
+                self.parse_filename(filename)
+            elif arg.startswith('--file'):
+                urls_file = self.get_long_param(arg)
+                self.parse_urls(urls_file)
+            else:
+                remain_args.append(arg)
+        self.argv = remain_args
+
+    def parse(self):
+        block_size = self.get_param('-b')
+        if block_size:
+            self.parse_block_size(block_size)
+
+        timeout = self.get_param('-T')
+        if timeout:
+            self.parse_timeout(timeout)
+
+        filename = self.get_param('-o')
+        if filename:
+            self.parse_filename(filename)
+
+        urls_file = self.get_param('-f')
+        if urls_file:
+            self.parse_urls(urls_file)
+
+        self.parse_long_args()
+        self.urls.extend(self.argv)
 
 
 
 
 if __name__ == '__main__':
 
-    print(start_msg.format(VERSION))
+    console = Console()
+    console.out(start_msg.format(VERSION))
 
-    block_size = 4 * 2**20
-    filename = ''
-    timeout = 10
-    urls = []
-
-    if '-b' in sys.argv:
-        i = sys.argv.index('-b') + 1
-        block_size = sys.argv[i]
-        if block_size.isdigit():
-            block_size = int(block_size)
-        else:
-            block_size = int(block_size[:-1]) * {'k': 2**10, 'M': 2**20}[block_size[-1:]]
-
-    if '-o' in sys.argv:
-        i = sys.argv.index('-o') + 1
-        filename = sys.argv[i]
-
-    if '-T' in sys.argv:
-        i = sys.argv.index('-T') + 1
-        timeout = sys.argv[i]
-
-    if '-f' in sys.argv:
-        i = sys.argv.index('-f') + 1
-        with open(sys.argv[i], 'r') as links:
-            for link in links:
-                urls.append(link.strip('\r\n'))
-
-    for arg in sys.argv:
-        if arg.startswith('http://') or arg.startswith('https://'):
-            urls.append(arg)
-
-    manager = Manager(urls, block_size, filename, timeout)
-    manager.download()
+    try:
+        cl = CommandLine(sys.argv)
+        cl.parse()
+        manager = Manager(cl.urls, cl.block_size, cl.filename, cl.timeout)
+        manager.download()
+    except CommandLineError as e:
+        console.error(str(e))
+    except DownloadError:
+        console.error(download_impossible_error)
     
