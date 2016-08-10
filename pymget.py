@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 
 import sys, os
 import threading, queue
 from http import client
 from collections import deque
-import time
-import struct
-import re
+import time, struct, re
 
-VERSION = '1.08'
+VERSION = '1.09'
 
 start_msg = '\nPyMGet v{}\n'
 
@@ -29,6 +28,7 @@ wrong_commandline_error = 'неверный аргумент командной 
 arg_needs_param_error = "Аргумент '{}' требует указания параметра."
 wrong_param_format_error = "Неверный формат параметра '{}': {}"
 file_not_found_error = "Файл '{}' не найден."
+no_mirrors_error = 'Нет зеркал для скачивания.'
 
 empty_filename_warning = 'невозможно определить имя файла на зеркале {}. Возможно, это другой файл.'
 other_filename_warning = 'имя файла на зеркале {} отличается от {}. Возможно, это другой файл.'
@@ -90,7 +90,7 @@ class Console:
         self.newline = True
         self.progressbar = ProgressBar()
 
-    def out(self, text, end='\n'):
+    def out(self, text='', end='\n'):
         if not self.newline:
             print()
         print(text, end=end)
@@ -183,12 +183,14 @@ class HTTPSThread(ConnectionThread):
 
 class Part:
 
-    def __init__(self, name, status, offset, data=None, file_size=None):
+    def __init__(self, name, status, first_byte, offset=None, data=None, file_size=None, complete=False):
         self.name = name
         self.data = data
         self.status = status
+        self.first_byte = first_byte
         self.offset = offset
         self.file_size = file_size
+        self.complete = complete
 
 
 
@@ -196,6 +198,7 @@ class Part:
 class DownloadThread(threading.Thread):
 
     user_agent = 'PyMGet/{} ({} {}, {})'.format(VERSION, os.uname().sysname, os.uname().machine, os.uname().release)
+    part_size = 8 * 2**10
 
     def __init__(self, name, conn, request, offset, block_size):
         threading.Thread.__init__(self)
@@ -222,12 +225,24 @@ class DownloadThread(threading.Thread):
                 status = response.status
                 raise client.HTTPException
             file_size = int(response.getheader('Content-Range').split('/')[-1])
-            data = response.read()
-            part = Part(self.name, response.status, self.offset, data, file_size)
+            data_size = int(response.getheader('Content-Length'))
+            sent_data_size = 0
+            while True:
+                try:
+                    data = response.read(self.part_size)
+                    offset = sent_data_size
+                    sent_data_size += len(data)
+                    if sent_data_size >= data_size:
+                        part = Part(self.name, response.status, self.offset, offset, data, file_size, True)
+                        break
+                    else:
+                        part = Part(self.name, response.status, self.offset, offset, data, file_size, False)
+                finally:
+                    self.time = time.time() - self.starttime
+                    Manager.data_queue.put(part)
             response.close()
         except:
-            part = Part(self.name, status, self.offset)
-        finally:
+            part = Part(self.name, status, self.offset, complete=True)
             self.time = time.time() - self.starttime
             Manager.data_queue.put(part)
 
@@ -327,6 +342,8 @@ class Manager:
             mirror = Mirror(URL(url), self.block_size, self.timeout)
             if self.check_filename(mirror):
                 self.wait_mirrors[mirror.name] = mirror
+        if not self.wait_mirrors:
+            raise DownloadError(no_mirrors_error)
         if self.filename == '':
             self.filename = 'out'
         self.context = Context(self.filename)
@@ -384,6 +401,9 @@ class Manager:
                 mirror = self.active_mirrors[part.name]
                 mirror.thread.join()
 
+                if part.complete:
+                    self.parts_in_progress.remove(part.first_byte)
+
                 try:
                     try:
                         if part.status // 100 == 3:
@@ -410,7 +430,8 @@ class Manager:
                         speeds[part.name] = speed
                         self.console.progress(self.written_bytes, sum(speeds.values()))
 
-                        self.give_task(mirror)
+                        if part.complete:
+                            self.give_task(mirror)
 
                     except AssertionError as e:
                         self.console.error(str(e))
@@ -421,14 +442,13 @@ class Manager:
                         self.wait_mirrors[new_mirror.name] = new_mirror
                         raise
                 except:
-                    self.failed_parts.append(part.offset)
+                    self.failed_parts.append(part.first_byte)
                     mirror.thread.join()
                     mirror.close()
                     del self.active_mirrors[part.name]
                     if not self.active_mirrors and not self.wait_mirrors:
-                        raise DownloadError
+                        raise DownloadError(download_impossible_error)
                 finally:
-                    self.parts_in_progress.remove(part.offset)
                     needle_parts = self.parts_in_progress.copy()
                     needle_parts.extend(self.failed_parts)
                     self.context.update(self.offset, self.written_bytes, needle_parts)
@@ -436,7 +456,7 @@ class Manager:
             for mirror in self.active_mirrors.values():
                 mirror.thread.join()
                 mirror.close()
-            print()
+            self.console.out()
 
         self.context.delete()
 
@@ -562,6 +582,6 @@ if __name__ == '__main__':
         manager.download()
     except CommandLineError as e:
         console.error(str(e))
-    except DownloadError:
-        console.error(download_impossible_error)
+    except DownloadError as e:
+        console.error(str(e))
     
