@@ -9,7 +9,7 @@ import time, struct, re
 import ftplib
 from abc import ABCMeta, abstractproperty
 
-VERSION = '1.15'
+VERSION = '1.16'
 
 start_msg = '\nPyMGet v{}\n'
 
@@ -57,9 +57,23 @@ class ProgressBar:
     WIDTH = 57
 
     def __init__(self):
-        self.total = 0
+        self._total = 0
+        self.time = 0
 
-    def update(self, complete, speed):
+    @property
+    def total(self):
+        return self._total
+
+    @total.setter
+    def total(self, total):
+        self.time = time.time()
+        self._total = total
+
+    def update(self, complete):
+        try:
+            speed = complete / (time.time() - self.time)
+        except:
+            speed = 0
         if self.total != 0:
             percent = complete / self.total
             progress = round(self.WIDTH * percent)
@@ -105,11 +119,11 @@ class Console:
     def warning(self, text, end='\n'):
         self.out(warning_msg + text, end)
 
-    def progress(self, complete, speed):
+    def progress(self, complete):
         if self.newline:
             print()
         self.newline = False
-        self.progressbar.update(complete, speed)
+        self.progressbar.update(complete)
 
     def ask(self, text, default):
         YES = ['y', 'yes', 'д', 'да']
@@ -129,13 +143,12 @@ class Console:
 
 class Part:
 
-    def __init__(self, name, status, offset, fragment_offset=0, complete=True, data=None, file_size=None, speed=0, gotten_size=0):
+    def __init__(self, name, status, offset, fragment_offset=0, complete=True, data=None, file_size=None, gotten_size=0):
         self.name = name
         self.data = data
         self.status = status
         self.offset = offset
         self.fragment_offset = fragment_offset
-        self.speed = speed
         self.complete = complete
         self.file_size = file_size
         self.gotten_size = gotten_size
@@ -230,7 +243,6 @@ class DownloadThread(threading.Thread, metaclass=ABCMeta):
         self.ready = threading.Event()
 
     def start(self):
-        self.starttime = time.time()
         self.ready.clear()
         threading.Thread.start(self)
 
@@ -261,10 +273,8 @@ class HTTXDownloadThread(DownloadThread, metaclass=ABCMeta):
             gotten_size = fragment_offset = 0
             while part_size > gotten_size:
                 data = response.read(self.FRAGMENT_SIZE)
-                self.time = time.time() - self.starttime
                 gotten_size += len(data)
-                speed = gotten_size / self.time
-                part = Part(self.name, response.status, self.offset, fragment_offset, part_size <= gotten_size, data, file_size, speed, gotten_size)
+                part = Part(self.name, response.status, self.offset, fragment_offset, part_size <= gotten_size, data, file_size, gotten_size)
                 fragment_offset = gotten_size
                 Manager.data_queue.put(part)
             response.close()
@@ -294,11 +304,11 @@ class FTPDownloadThread(DownloadThread):
             sock = self.conn.transfercmd('RETR ' + self.filename, self.offset)
             while gotten_size < self.block_size:
                 data = sock.recv(min(self.block_size - gotten_size, self.FRAGMENT_SIZE))
-                self.time = time.time() - self.starttime
+                if not data:
+                    raise Exception
                 gotten_size += len(data)
-                speed = gotten_size / self.time
                 complete = self.block_size - gotten_size <= 0 or file_size - self.offset - gotten_size <= 0
-                part = Part(self.name, 206, self.offset, fragment_offset, complete, data, file_size, speed, gotten_size)
+                part = Part(self.name, 206, self.offset, fragment_offset, complete, data, file_size, gotten_size)
                 fragment_offset = gotten_size
                 Manager.data_queue.put(part)
                 if complete:
@@ -531,7 +541,6 @@ class Manager:
             self.offset += self.block_size
 
     def download(self):
-        speeds = {}
         gotten_sizes = {}
         with open(self.filename, self.context.open_mode) as outfile:
             while self.file_size == 0 or self.written_bytes < self.file_size:
@@ -565,17 +574,14 @@ class Manager:
 
                                 outfile.seek(part.offset + part.fragment_offset, 0)
                                 outfile.write(part.data)
-
-                                speeds[part.name] = part.speed
                                 gotten_sizes[part.name] = part.gotten_size
 
                                 progress = self.written_bytes + sum(gotten_sizes.values())
-                                self.console.progress(progress, sum(speeds.values()))
+                                self.console.progress(progress)
 
                                 if part.complete:
                                     self.written_bytes += part.gotten_size
                                     gotten_sizes[part.name] = 0
-                                    speeds[part.name] = 0
 
                             except AssertionError as e:
                                 self.console.error(str(e))
@@ -590,7 +596,6 @@ class Manager:
                             mirror.join()
                             mirror.close()
                             del self.mirrors[part.name]
-                            del speeds[part.name]
                             del gotten_sizes[part.name]
                             if not self.mirrors:
                                 raise DownloadError(download_impossible_error)
