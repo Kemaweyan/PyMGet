@@ -1,9 +1,49 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 import sys, os
 import threading, queue
 from http import client
 from collections import deque
+import time
+
+VERSION = '1.02'
+
+def calc_speed(size):
+    if size >= 2**30:
+        return '{:.2f}GiB/s'.format(size / 2**30)
+    if size >= 2**20:
+        return '{:.2f}MiB/s'.format(size / 2**20)
+    if size >= 2**10:
+        return '{:.2f}KiB/s'.format(size / 2**10)
+    return '{}B/s'.format(size)
+
+class ProgressBar:
+
+    WIDTH = 58
+
+    def __init__(self):
+        self.total = 0
+        self.update()
+
+    def update(self, complete=0, speed=0):
+        if self.total != 0:
+            progress = round(self.WIDTH * complete / self.total)
+            speed_str = calc_speed(speed)
+        else:
+            progress = 0
+            speed_str = ''
+
+        progress_str = '[{}]'.format(('#'*progress).ljust(self.WIDTH, '-'))
+        percent_str = '{:.2%}'.format(progress / self.WIDTH)
+        bar = '{0} {1} {2}\r'.format(progress_str, percent_str.rjust(7), speed_str.rjust(11))
+
+        sys.stdout.write(bar)
+        sys.stdout.flush()
+
+
+
+
 
 class Part:
 
@@ -34,7 +74,7 @@ class ConnectionThread(threading.Thread):
 
 class DownloadThread(threading.Thread):
 
-    user_agent = 'PyMGet/1.01 ({} {}, {})'.format(os.uname().sysname, os.uname().machine, os.uname().release)
+    user_agent = 'PyMGet/{} ({} {}, {})'.format(VERSION, os.uname().sysname, os.uname().machine, os.uname().release)
 
     def __init__(self, name, conn, request, begin, block_size):
         threading.Thread.__init__(self)
@@ -43,6 +83,10 @@ class DownloadThread(threading.Thread):
         self.request = request
         self.begin = begin
         self.block_size = block_size
+
+    def start(self):
+        self.starttime = time.time()
+        threading.Thread.start(self)
 
     def run(self):
         headers = {'User-Agent': self.user_agent, 'Range': 'bytes={}-{}'.format(self.begin, self.begin + self.block_size - 1)}
@@ -58,6 +102,7 @@ class DownloadThread(threading.Thread):
         except:
             part = Part(self.name, 0, self.begin)
         finally:
+            self.time = time.time() - self.starttime
             Manager.data_queue.put(part)
 
 
@@ -70,7 +115,6 @@ class Mirror:
         self.block_size = block_size
         self.timeout = timeout
         url_parts = self.url.split('/', 3)
-        assert url_parts[0] == 'http:', 'Wrong URL. It is not HTTP protocol.'
         self.host = url_parts[2]
         self.request = '/' + url_parts[3]
         self.thread = ConnectionThread(self.host, self.timeout)
@@ -108,10 +152,7 @@ class Manager:
 
         self.mirrors = {}
         for url in urls:
-            try:
-                self.mirrors[url] = Mirror(url, self.block_size, timeout)
-            except AssertionError as e:
-                print(str(e))
+            self.mirrors[url] = Mirror(url, self.block_size, timeout)
 
     def download(self):
         begin = 0
@@ -119,12 +160,12 @@ class Manager:
         written_bytes = 0
         failed_parts = deque([])
         wait_mirrors = self.mirrors.copy()
+        speeds = {}
 
         while len(wait_mirrors) > 0:
             remain_mirrors = {}
             for name, mirror in wait_mirrors.items():
                 if not mirror.wait_connection():
-                    print(name)
                     remain_mirrors[name] = wait_mirrors[name]
             wait_mirrors = remain_mirrors
 
@@ -133,21 +174,29 @@ class Manager:
                 mirror.download(begin)
                 begin += self.block_size
 
+            progress = ProgressBar()
+
             while file_size == 0 or written_bytes < file_size:
                 part = self.data_queue.get()
 
                 try:
-                    assert part.status != 200, 'Server does not support partial download.'
-                    assert part.status == 206, 'Error {}'.format(part.status)
+                    assert part.status != 200, 'Сервер не поддерживает скачивание по частям.'
+                    assert part.status == 206, 'Неверный ответ сервера. Код {}'.format(part.status)
                     if file_size == 0:
                         file_size = part.file_size
-                    assert file_size == part.file_size, 'File size differs from first one.'
+                        progress.total = file_size
+                    assert file_size == part.file_size, 'Размер файла отличается.'
 
                     outfile.seek(part.begin, 0)
-                    written_bytes += outfile.write(part.data)
+                    size = outfile.write(part.data)
+                    written_bytes += size
 
                     mirror = self.mirrors[part.name]
                     mirror.thread.join()
+
+                    speed = size / mirror.thread.time
+                    speeds[part.name] = speed
+                    progress.update(written_bytes, sum(speeds.values()))
 
                     if len(failed_parts) > 0:
                         mirror.download(failed_parts.popleft())
@@ -166,6 +215,7 @@ class Manager:
             for mirror in self.mirrors.values():
                 mirror.thread.join()
                 mirror.close()
+            print()
 
         return 0
 
