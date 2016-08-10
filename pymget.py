@@ -5,11 +5,9 @@ import sys, os
 import threading, queue
 from http import client
 from collections import deque
-import time
-import struct
-import re
+import time, struct, re
 
-VERSION = '1.08'
+VERSION = '1.10'
 
 start_msg = '\nPyMGet v{}\n'
 
@@ -29,6 +27,7 @@ wrong_commandline_error = 'неверный аргумент командной 
 arg_needs_param_error = "Аргумент '{}' требует указания параметра."
 wrong_param_format_error = "Неверный формат параметра '{}': {}"
 file_not_found_error = "Файл '{}' не найден."
+no_mirrors_error = 'Нет зеркал для скачивания.'
 
 empty_filename_warning = 'невозможно определить имя файла на зеркале {}. Возможно, это другой файл.'
 other_filename_warning = 'имя файла на зеркале {} отличается от {}. Возможно, это другой файл.'
@@ -90,7 +89,7 @@ class Console:
         self.newline = True
         self.progressbar = ProgressBar()
 
-    def out(self, text, end='\n'):
+    def out(self, text='', end='\n'):
         if not self.newline:
             print()
         print(text, end=end)
@@ -162,6 +161,9 @@ class ConnectionThread(threading.Thread):
         self.conn = self.protocol(self.url.host, self.url.port, timeout=self.timeout)
         self.ready.set()
 
+    def download_thread(self, offset, block_size):
+        return DownloadThread(self.url, self.conn, offset, block_size)
+
 class HTTPThread(ConnectionThread):
 
     PORT = 80
@@ -197,11 +199,12 @@ class DownloadThread(threading.Thread):
 
     user_agent = 'PyMGet/{} ({} {}, {})'.format(VERSION, os.uname().sysname, os.uname().machine, os.uname().release)
 
-    def __init__(self, name, conn, request, offset, block_size):
+    def __init__(self, url, conn, offset, block_size):
         threading.Thread.__init__(self)
-        self.name = name
+        self.name = url.host
+        self.protocol = url.protocol
         self.conn = conn
-        self.request = request
+        self.request = url.request
         self.offset = offset
         self.block_size = block_size
         self.location = ''
@@ -211,13 +214,16 @@ class DownloadThread(threading.Thread):
         threading.Thread.start(self)
 
     def run(self):
-        headers = {'User-Agent': self.user_agent, 'Refferer': 'http://{}/'.format(self.name), 'Range': 'bytes={}-{}'.format(self.offset, self.offset + self.block_size - 1)}
+        headers = {'User-Agent': self.user_agent, 'Refferer': '{}://{}/'.format(self.protocol, self.name), 
+                    'Range': 'bytes={}-{}'.format(self.offset, self.offset + self.block_size - 1)}
         status = 0
         try:
             self.conn.request('GET', self.request, headers=headers)
             response = self.conn.getresponse()
             if response.status // 100 == 3:
                 self.location = response.getheader('Location')
+                if not self.location.startswith('http'):
+                    self.location = '{}://{}/{}'.format(self.protocol, self.name, self.location.rsplit('/', 1)[0])
             if response.status != 206:
                 status = response.status
                 raise client.HTTPException
@@ -244,19 +250,19 @@ class Mirror:
     def __init__(self, url, block_size, timeout):
         self.url = url
         self.block_size = block_size
-        self.thread = ConnectionThread.connect(url, timeout)
-        self.thread.start()
+        self.conn_thread = ConnectionThread.connect(url, timeout)
+        self.conn_thread.start()
 
     def wait_connection(self):
-        if not self.thread.ready.wait(0.1):
+        if not self.conn_thread.ready.wait(0.1):
             return False
-        self.thread.join()
-        self.conn = self.thread.conn
+        self.conn_thread.join()
+        self.conn = self.conn_thread.conn
         return True
 
     def download(self, offset):
-        self.thread = DownloadThread(self.url.host, self.conn, self.url.request, offset, self.block_size)
-        self.thread.start()
+        self.dnl_thread = self.conn_thread.download_thread(offset, self.block_size)
+        self.dnl_thread.start()
 
     def close(self):
         self.conn.close()
@@ -327,6 +333,8 @@ class Manager:
             mirror = Mirror(URL(url), self.block_size, self.timeout)
             if self.check_filename(mirror):
                 self.wait_mirrors[mirror.name] = mirror
+        if not self.wait_mirrors:
+            raise DownloadError(no_mirrors_error)
         if self.filename == '':
             self.filename = 'out'
         self.context = Context(self.filename)
@@ -382,12 +390,14 @@ class Manager:
                 
                 part = self.data_queue.get()
                 mirror = self.active_mirrors[part.name]
-                mirror.thread.join()
+                mirror.dnl_thread.join()
+
+                self.parts_in_progress.remove(part.offset)
 
                 try:
                     try:
                         if part.status // 100 == 3:
-                            raise MirrorRedirect(mirror.thread.location)
+                            raise MirrorRedirect(mirror.dnl_thread.location)
 
                         assert part.status != 0, connection_error.format(part.name)
                         assert part.status != 200, no_partial_error.format(part.name)
@@ -406,7 +416,7 @@ class Manager:
                         size = outfile.write(part.data)
                         self.written_bytes += size
 
-                        speed = size / mirror.thread.time
+                        speed = size / mirror.dnl_thread.time
                         speeds[part.name] = speed
                         self.console.progress(self.written_bytes, sum(speeds.values()))
 
@@ -422,21 +432,20 @@ class Manager:
                         raise
                 except:
                     self.failed_parts.append(part.offset)
-                    mirror.thread.join()
+                    mirror.dnl_thread.join()
                     mirror.close()
                     del self.active_mirrors[part.name]
                     if not self.active_mirrors and not self.wait_mirrors:
-                        raise DownloadError
+                        raise DownloadError(download_impossible_error)
                 finally:
-                    self.parts_in_progress.remove(part.offset)
                     needle_parts = self.parts_in_progress.copy()
                     needle_parts.extend(self.failed_parts)
                     self.context.update(self.offset, self.written_bytes, needle_parts)
 
             for mirror in self.active_mirrors.values():
-                mirror.thread.join()
+                mirror.dnl_thread.join()
                 mirror.close()
-            print()
+            self.console.out()
 
         self.context.delete()
 
@@ -562,6 +571,6 @@ if __name__ == '__main__':
         manager.download()
     except CommandLineError as e:
         console.error(str(e))
-    except DownloadError:
-        console.error(download_impossible_error)
+    except DownloadError as e:
+        console.error(str(e))
     
