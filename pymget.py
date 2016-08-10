@@ -6,8 +6,9 @@ import threading, queue
 from http import client
 from collections import deque
 import time
+import struct
 
-VERSION = '1.03'
+VERSION = '1.04'
 
 start_msg = '\nPyMGet v{}\n'
 
@@ -177,6 +178,45 @@ class Mirror:
 
 
 
+
+class StateFile:
+
+    def __init__(self, filename):
+        self.filename = filename + '.mget'
+        self.failed_parts = []
+        self.begin = 0
+        self.written_bytes = 0
+        self.open_mode = 'wb'
+        try:
+            with open(self.filename, 'rb') as f:
+                data = f.read(struct.calcsize('NNq'))
+                self.begin, self.written_bytes, failed_parts_len = struct.unpack('NNq', data)
+                if failed_parts_len > 0:
+                    data = f.read(struct.calcsize('N' * failed_parts_len))
+                    self.failed_parts = struct.unpack('N' * failed_parts_len, data)
+                self.open_mode = 'rb+'
+        except:
+            pass
+
+    def update(self, begin, written_bytes, failed_parts):
+        self.begin = begin
+        self.written_bytes = written_bytes
+        self.failed_parts = failed_parts
+        failed_parts_len = len(self.failed_parts)
+        format = 'NNq' + 'N' * failed_parts_len
+        data = struct.pack(format, self.begin, self.written_bytes, failed_parts_len, *self.failed_parts)
+        with open(self.filename, 'wb') as f:
+            f.write(data)
+
+    def delete(self):
+        try:
+            os.remove(self.filename)
+        except:
+            pass
+
+
+
+
 class Manager:
 
     data_queue = queue.Queue()
@@ -199,10 +239,12 @@ class Manager:
             self.mirrors[host] = Mirror(host, request, self.block_size, timeout)
 
     def download(self):
-        begin = 0
+        statefile = StateFile(self.filename)
+        begin = statefile.begin
+        written_bytes = statefile.written_bytes
+        failed_parts = deque(statefile.failed_parts)
+        parts_in_progress = []
         file_size = 0
-        written_bytes = 0
-        failed_parts = deque([])
         wait_mirrors = self.mirrors.copy()
         speeds = {}
 
@@ -215,13 +257,14 @@ class Manager:
                 if not mirror.wait_connection():
                     remain_mirrors[name] = wait_mirrors[name]
                 else:
-                    print(connected_msg.format(name))
+                    console.out(connected_msg.format(name))
             wait_mirrors = remain_mirrors
         print()
 
-        with open(self.filename, 'wb') as outfile:
+        with open(self.filename, statefile.open_mode) as outfile:
             for mirror in self.mirrors.values():
                 mirror.download(begin)
+                parts_in_progress.append(begin)
                 begin += self.block_size
 
             while file_size == 0 or written_bytes < file_size:
@@ -237,13 +280,15 @@ class Manager:
                         progress.total = file_size
                         outfile.seek(part.file_size - 1, 0)
                         outfile.write(b'\x00')
-                        print(downloading_msg.format(self.filename, part.file_size, calc_units(part.file_size)))
+                        console.out(downloading_msg.format(self.filename, part.file_size, calc_units(part.file_size)))
 
                     assert file_size == part.file_size, filesize_error.format(part.name, part.file_size, file_size)
 
                     outfile.seek(part.begin, 0)
                     size = outfile.write(part.data)
                     written_bytes += size
+
+                    parts_in_progress.remove(part.begin)
 
                     mirror = self.mirrors[part.name]
                     mirror.thread.join()
@@ -253,10 +298,14 @@ class Manager:
                     console.progress(written_bytes, sum(speeds.values()))
 
                     if len(failed_parts) > 0:
-                        mirror.download(failed_parts.popleft())
+                        new_part = failed_parts.popleft()
+                        parts_in_progress.append(new_part)
+                        mirror.download(new_part)
                     elif begin < file_size:
+                        parts_in_progress.append(begin)
                         mirror.download(begin)
                         begin += self.block_size
+
                 except AssertionError as e:
                     console.out(str(e))
                     failed_parts.append(part.begin)
@@ -265,12 +314,18 @@ class Manager:
                     del self.mirrors[part.name]
                     if len(self.mirrors) == 0:
                         return 1
+                finally:
+                    needle_parts = parts_in_progress.copy()
+                    needle_parts.extend(failed_parts)
+                    statefile.update(begin, written_bytes, needle_parts)
 
             for mirror in self.mirrors.values():
                 mirror.thread.join()
                 mirror.close()
             print()
 
+        
+        statefile.delete()
         return 0
 
 
