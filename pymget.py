@@ -8,12 +8,13 @@ from collections import deque
 import time
 import struct
 
-VERSION = '1.06'
+VERSION = '1.07'
 
 start_msg = '\nPyMGet v{}\n'
 
 connected_msg = 'Соединение с сервером {} OK'
 downloading_msg = '\nПолучение файла {} {} байт ({}):\n\n'
+redirect_msg = '\nПеренаправление с зеркала {} по адресу {}'
 
 connection_error = '\nОшибка: не удалось соединиться с сервером {}\n\n'
 no_partial_error = '\nОшибка: сервер {} не поддерживает скачивание по частям.\n\n'
@@ -186,17 +187,20 @@ class DownloadThread(threading.Thread):
         self.request = request
         self.offset = offset
         self.block_size = block_size
+        self.location = ''
 
     def start(self):
         self.starttime = time.time()
         threading.Thread.start(self)
 
     def run(self):
-        headers = {'User-Agent': self.user_agent, 'Range': 'bytes={}-{}'.format(self.offset, self.offset + self.block_size - 1)}
+        headers = {'User-Agent': self.user_agent, 'Refferer': 'http://{}/'.format(self.name), 'Range': 'bytes={}-{}'.format(self.offset, self.offset + self.block_size - 1)}
         status = 0
         try:
             self.conn.request('GET', self.request, headers=headers)
             response = self.conn.getresponse()
+            if response.status // 100 == 3:
+                self.location = response.getheader('Location')
             if response.status != 206:
                 status = response.status
                 raise client.HTTPException
@@ -212,6 +216,11 @@ class DownloadThread(threading.Thread):
 
 
 
+class MirrorRedirect(Exception):
+
+    def __init__(self, location):
+        Exception.__init__(self)
+        self.location = location
 
 class Mirror:
 
@@ -228,8 +237,8 @@ class Mirror:
         self.conn = self.thread.conn
         return True
 
-    def download(self, begin):
-        self.thread = DownloadThread(self.url.host, self.conn, self.url.request, begin, self.block_size)
+    def download(self, offset):
+        self.thread = DownloadThread(self.url.host, self.conn, self.url.request, offset, self.block_size)
         self.thread.start()
 
     def close(self):
@@ -292,11 +301,13 @@ class Manager:
         self.console = Console()
         self.block_size = block_size
         self.filename = filename
-        self.mirrors = {}
+        self.timeout = timeout
+        self.wait_mirrors = {}
+        self.active_mirrors = {}
         for url in urls:
-            mirror = Mirror(URL(url), self.block_size, timeout)
+            mirror = Mirror(URL(url), self.block_size, self.timeout)
             if self.check_filename(mirror):
-                self.mirrors[mirror.name] = mirror
+                self.wait_mirrors[mirror.name] = mirror
         if self.filename == '':
             self.filename = 'out'
         self.context = Context(self.filename)
@@ -319,80 +330,91 @@ class Manager:
         return self.console.ask(anyway_download_question.format(mirror.name), False)
 
     def wait_connections(self):
-        wait_mirrors = self.mirrors.copy()
-        while len(wait_mirrors) > 0:
+        if len(self.wait_mirrors) == 0:
+            return
+        while True:
             remain_mirrors = {}
-            for name, mirror in wait_mirrors.items():
+            for name, mirror in self.wait_mirrors.items():
                 if not mirror.wait_connection():
-                    remain_mirrors[name] = wait_mirrors[name]
+                    remain_mirrors[name] = self.wait_mirrors[name]
                 else:
                     self.console.out(connected_msg.format(name))
-            wait_mirrors = remain_mirrors
+                    self.give_task(mirror)
+                    self.active_mirrors[name] = mirror
+            self.wait_mirrors = remain_mirrors
+            if len(self.active_mirrors) > 0:
+                break
 
     def give_task(self, mirror):
         if len(self.failed_parts) > 0:
             new_part = self.failed_parts.popleft()
             self.parts_in_progress.append(new_part)
             mirror.download(new_part)
-        elif self.offset <= self.file_size:
+        elif self.offset < self.file_size or self.file_size == 0:
             self.parts_in_progress.append(self.offset)
             mirror.download(self.offset)
             self.offset += self.block_size
 
     def download(self):
         speeds = {}
-        self.wait_connections()
-        print()
-
         with open(self.filename, self.context.open_mode) as outfile:
-            for mirror in self.mirrors.values():
-                self.give_task(mirror)
-
             while self.file_size == 0 or self.written_bytes < self.file_size:
+                self.wait_connections()
+                
                 part = self.data_queue.get()
-                mirror = self.mirrors[part.name]
+                mirror = self.active_mirrors[part.name]
                 mirror.thread.join()
 
                 try:
-                    assert part.status != 0, connection_error.format(part.name)
-                    assert part.status != 200, no_partial_error.format(part.name)
-                    assert part.status == 206, http_error.format(part.status)
+                    try:
+                        if part.status // 100 == 3:
+                            raise MirrorRedirect(mirror.thread.location)
 
-                    if self.file_size == 0:
-                        self.file_size = part.file_size
-                        self.console.progressbar.total = self.file_size
-                        outfile.seek(self.file_size - 1, 0)
-                        outfile.write(b'\x00')
-                        self.console.out(downloading_msg.format(self.filename, self.file_size, calc_units(self.file_size)))
+                        assert part.status != 0, connection_error.format(part.name)
+                        assert part.status != 200, no_partial_error.format(part.name)
+                        assert part.status == 206, http_error.format(part.status)
 
-                    assert self.file_size == part.file_size, filesize_error.format(part.name, part.file_size, self.file_size)
+                        if self.file_size == 0:
+                            self.file_size = part.file_size
+                            self.console.progressbar.total = self.file_size
+                            outfile.seek(self.file_size - 1, 0)
+                            outfile.write(b'\x00')
+                            self.console.out(downloading_msg.format(self.filename, self.file_size, calc_units(self.file_size)))
 
-                    outfile.seek(part.offset, 0)
-                    size = outfile.write(part.data)
-                    self.written_bytes += size
+                        assert self.file_size == part.file_size, filesize_error.format(part.name, part.file_size, self.file_size)
 
-                    self.parts_in_progress.remove(part.offset)
+                        outfile.seek(part.offset, 0)
+                        size = outfile.write(part.data)
+                        self.written_bytes += size
 
-                    speed = size / mirror.thread.time
-                    speeds[part.name] = speed
-                    self.console.progress(self.written_bytes, sum(speeds.values()))
+                        speed = size / mirror.thread.time
+                        speeds[part.name] = speed
+                        self.console.progress(self.written_bytes, sum(speeds.values()))
 
-                    self.give_task(mirror)
+                        self.give_task(mirror)
 
-                except AssertionError as e:
-                    self.console.out(str(e))
+                    except AssertionError as e:
+                        self.console.out(str(e))
+                        raise
+                    except MirrorRedirect as e:
+                        self.console.out(redirect_msg.format(part.name, e.location))
+                        new_mirror = Mirror(URL(e.location), self.block_size, self.timeout)
+                        self.wait_mirrors[new_mirror.name] = new_mirror
+                        raise
+                except:
                     self.failed_parts.append(part.offset)
                     mirror.thread.join()
                     mirror.close()
-                    del self.mirrors[part.name]
-                    if len(self.mirrors) == 0:
+                    del self.active_mirrors[part.name]
+                    if not self.active_mirrors and not self.wait_mirrors:
                         return 1
                 finally:
+                    self.parts_in_progress.remove(part.offset)
                     needle_parts = self.parts_in_progress.copy()
                     needle_parts.extend(self.failed_parts)
                     self.context.update(self.offset, self.written_bytes, needle_parts)
 
-            for mirror in self.mirrors.values():
+            for mirror in self.active_mirrors.values():
                 mirror.thread.join()
                 mirror.close()
             print()
