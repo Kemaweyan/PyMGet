@@ -8,9 +8,9 @@ from collections import deque
 import time, struct, re
 import ftplib
 
-VERSION = '1.11'
+VERSION = '1.12'
 
-start_msg = '\nMultiGet v{}\n'
+start_msg = '\nPyMGet v{}\n'
 
 error_msg = '\nОшибка: '
 warning_msg = '\nВнимание: '
@@ -205,11 +205,7 @@ class FTPThread(ConnectionThread):
     PORT = 21
 
     def run(self):
-        self.conn = ftplib.FTP(self.url.host, 'anonymous', '', timeout=self.timeout)
-        path = self.url.request.rsplit('/', 1)[0]
-        self.conn.voidcmd('TYPE I')
-        self.conn.cwd(path)
-        self.conn.voidcmd('PASV')
+        self.conn = 0
         self.ready.set()
 
     def download_thread(self, offset, block_size):
@@ -234,7 +230,7 @@ class DownloadThread(threading.Thread):
 
 class HTTXDownloadThread(DownloadThread):
 
-    user_agent = 'MultiGet/{} ({} {}, {})'.format(VERSION, os.uname().sysname, os.uname().machine, os.uname().release)
+    user_agent = 'PyMGet/{} ({} {}, {})'.format(VERSION, os.uname().sysname, os.uname().machine, os.uname().release)
 
     def __init__(self, url, conn, offset, block_size):
         DownloadThread.__init__(self, url, conn, offset, block_size)
@@ -274,21 +270,25 @@ class FTPDownloadThread(DownloadThread):
 
     def __init__(self, url, conn, offset, block_size):
         DownloadThread.__init__(self, url, conn, offset, block_size)
+        self.path = url.request.rsplit('/', 1)[0]
         self.filename = url.request.rsplit('/', 1)[1]
+        self.host = url.host
 
     def run(self):
         data = b''
         recv_bytes = 0
         try:
+            self.conn = ftplib.FTP(self.host, 'anonymous', '', timeout=10)
+            self.conn.voidcmd('TYPE I')
+            self.conn.cwd(self.path)
+            self.conn.voidcmd('PASV')
             file_size = self.conn.size(self.filename)
             sock = self.conn.transfercmd('RETR ' + self.filename, self.offset)
             while recv_bytes < self.block_size:
                 recv_data = sock.recv(self.block_size - recv_bytes)
-                if not recv_data:
-                    break
                 data = b''.join([data, recv_data])
                 recv_bytes += len(recv_data)
-            part = Part(self.name, 1, self.offset, data, file_size)
+            part = Part(self.name, 206, self.offset, data, file_size)
         except Exception:
             part = Part(self.name, 0, self.offset)
         finally:
@@ -460,7 +460,7 @@ class Manager:
 
                         assert part.status != 0, connection_error.format(part.name)
                         assert part.status != 200, no_partial_error.format(part.name)
-                        assert part.status == 206 or part.status == 1, http_error.format(part.status)
+                        assert part.status == 206, http_error.format(part.status)
 
                         if self.file_size == 0:
                             self.file_size = part.file_size
@@ -479,21 +479,13 @@ class Manager:
                         speeds[part.name] = speed
                         self.console.progress(self.written_bytes, sum(speeds.values()))
 
-                        if part.status == 1:
-                            url = mirror.url
-                            mirror.dnl_thread.join()
-                            mirror.close()
-                            del self.active_mirrors[part.name]
-                            new_mirror = Mirror(url, self.block_size, self.timeout)
-                            self.wait_mirrors[new_mirror.name] = new_mirror
-                        else:
-                            self.give_task(mirror)
+                        self.give_task(mirror)
 
                     except AssertionError as e:
                         self.console.error(str(e))
                         raise
                     except MirrorRedirect as e:
-                        self.console.out(redirect_msg.format(part.name, mirror.dnl_thread.location))
+                        self.console.out(redirect_msg.format(part.name, e.location))
                         new_mirror = Mirror(URL(e.location), self.block_size, self.timeout)
                         self.wait_mirrors[new_mirror.name] = new_mirror
                         raise
