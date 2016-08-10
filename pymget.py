@@ -8,7 +8,7 @@ from collections import deque
 import time
 import struct
 
-VERSION = '1.05'
+VERSION = '1.06'
 
 start_msg = '\nPyMGet v{}\n'
 
@@ -20,7 +20,10 @@ no_partial_error = '\nОшибка: сервер {} не поддерживае�
 http_error = '\nОшибка: неверный ответ сервера. Код {}\n\n'
 filesize_error = '\nОшибка: размер файла на сервере {} {} байт отличается\nот полученного ранее {} байт.\n\n'
 
-other_filename_warning = '\nВнимание: имя файла на зеркале {} отличается от {}. Возможно, этот файл содержит другие данные.'
+empty_filename_warning = '\nВнимание: невозможно определить имя файла на зеркале {}. Возможно, это другой файл.'
+other_filename_warning = '\nВнимание: имя файла на зеркале {} отличается от {}. Возможно, это другой файл.'
+
+anyway_download_question = 'Всё равно использовать зеркало {}? (да/Нет):'
 
 
 
@@ -62,12 +65,20 @@ class ProgressBar:
 
 
 
+def singleton(cls):
+	instances = {}
+	def getinstance(*args):
+		if cls not in instances:
+			instances[cls] = cls(*args)
+		return instances[cls]
+	return getinstance
 
+@singleton
 class Console:
 
-    def __init__(self, progressbar):
+    def __init__(self):
         self.newline = True
-        self.progressbar = progressbar
+        self.progressbar = ProgressBar()
 
     def out(self, text, end='\n'):
         if not self.newline:
@@ -79,32 +90,27 @@ class Console:
         self.newline = False
         self.progressbar.update(complete, speed)
 
+    def ask(self, text, default):
+        YES = ['y', 'yes', 'д', 'да']
+        NO = ['n', 'no', 'н', 'нет']
+        self.out(text, end=' ')
+        while True:
+            answer = input().lower()
+            if answer in YES:
+                return True
+            if answer in NO:
+                return False
+            if answer == '':
+                return default
 
 
 
-class Part:
 
-    def __init__(self, name, status, begin, data=None, file_size=None):
-        self.name = name
-        self.data = data
-        self.status = status
-        self.begin = begin
-        self.file_size = file_size
+class URL:
 
-
-
-
-class ConnectionThread(threading.Thread):
-
-    def connect(url, timeout):
-        if url.lower().startswith('http:'):
-            return HTTPThread(url, timeout)
-        if url.lower().startswith('https:'):
-            return HTTPSThread(url, timeout)
-
-    def __init__(self, url, port, timeout):
-        threading.Thread.__init__(self)
+    def __init__(self, url):
         url_parts = url.split('/', 3)
+        self.protocol = url_parts[0].strip(':').lower()
         host = url_parts[2]
         self.request = '/' + url_parts[3]
         if ':' in host:
@@ -112,25 +118,60 @@ class ConnectionThread(threading.Thread):
             self.port = int(port)
         else:
             self.host = host
-            self.port = port
+            self.port = 0
+        self.filename = self.request.split('/')[-1]
+
+
+
+
+class ConnectionThread(threading.Thread):
+
+    def connect(url, timeout):
+        if url.protocol == 'http':
+            return HTTPThread(url, timeout)
+        if url.protocol == 'https':
+            return HTTPSThread(url, timeout)
+
+    def __init__(self, url, timeout):
+        threading.Thread.__init__(self)
+        self.url = url
+        if self.url.port == 0:
+            self.url.port = self.PORT
         self.timeout = timeout
         self.ready = threading.Event()
 
     def run(self):
-        self.conn = self.protocol(self.host, self.port, timeout=self.timeout)
+        self.conn = self.protocol(self.url.host, self.url.port, timeout=self.timeout)
         self.ready.set()
 
 class HTTPThread(ConnectionThread):
 
+    PORT = 80
+
     def __init__(self, url, timeout):
-        ConnectionThread.__init__(self, url, 80, timeout)
+        ConnectionThread.__init__(self, url, timeout)
         self.protocol = client.HTTPConnection
 
 class HTTPSThread(ConnectionThread):
 
+    PORT = 443
+
     def __init__(self, url, timeout):
-        ConnectionThread.__init__(self, url, 443, timeout)
+        ConnectionThread.__init__(self, url, timeout)
         self.protocol = client.HTTPSConnection
+
+
+
+
+class Part:
+
+    def __init__(self, name, status, offset, data=None, file_size=None):
+        self.name = name
+        self.data = data
+        self.status = status
+        self.offset = offset
+        self.file_size = file_size
+
 
 
 
@@ -138,12 +179,12 @@ class DownloadThread(threading.Thread):
 
     user_agent = 'PyMGet/{} ({} {}, {})'.format(VERSION, os.uname().sysname, os.uname().machine, os.uname().release)
 
-    def __init__(self, name, conn, request, begin, block_size):
+    def __init__(self, name, conn, request, offset, block_size):
         threading.Thread.__init__(self)
         self.name = name
         self.conn = conn
         self.request = request
-        self.begin = begin
+        self.offset = offset
         self.block_size = block_size
 
     def start(self):
@@ -151,7 +192,7 @@ class DownloadThread(threading.Thread):
         threading.Thread.start(self)
 
     def run(self):
-        headers = {'User-Agent': self.user_agent, 'Range': 'bytes={}-{}'.format(self.begin, self.begin + self.block_size - 1)}
+        headers = {'User-Agent': self.user_agent, 'Range': 'bytes={}-{}'.format(self.offset, self.offset + self.block_size - 1)}
         status = 0
         try:
             self.conn.request('GET', self.request, headers=headers)
@@ -161,10 +202,10 @@ class DownloadThread(threading.Thread):
                 raise client.HTTPException
             file_size = int(response.getheader('Content-Range').split('/')[-1])
             data = response.read()
-            part = Part(self.name, response.status, self.begin, data, file_size)
+            part = Part(self.name, response.status, self.offset, data, file_size)
             response.close()
         except:
-            part = Part(self.name, status, self.begin)
+            part = Part(self.name, status, self.offset)
         finally:
             self.time = time.time() - self.starttime
             Manager.data_queue.put(part)
@@ -175,11 +216,9 @@ class DownloadThread(threading.Thread):
 class Mirror:
 
     def __init__(self, url, block_size, timeout):
-        self.thread = ConnectionThread.connect(url, timeout)
+        self.url = url
         self.block_size = block_size
-        self.name = self.thread.host
-        self.request = self.thread.request
-        self.filename = self.thread.request.split('/')[-1]
+        self.thread = ConnectionThread.connect(url, timeout)
         self.thread.start()
 
     def wait_connection(self):
@@ -190,27 +229,35 @@ class Mirror:
         return True
 
     def download(self, begin):
-        self.thread = DownloadThread(self.name, self.conn, self.request, begin, self.block_size)
+        self.thread = DownloadThread(self.url.host, self.conn, self.url.request, begin, self.block_size)
         self.thread.start()
 
     def close(self):
         self.conn.close()
 
+    @property
+    def name(self):
+        return self.url.host
+
+    @property
+    def filename(self):
+        return self.url.filename
 
 
 
-class StateFile:
+
+class Context:
 
     def __init__(self, filename):
         self.filename = filename + '.mget'
         self.failed_parts = []
-        self.begin = 0
+        self.offset = 0
         self.written_bytes = 0
         self.open_mode = 'wb'
         try:
             with open(self.filename, 'rb') as f:
                 data = f.read(struct.calcsize('NNq'))
-                self.begin, self.written_bytes, failed_parts_len = struct.unpack('NNq', data)
+                self.offset, self.written_bytes, failed_parts_len = struct.unpack('NNq', data)
                 if failed_parts_len > 0:
                     data = f.read(struct.calcsize('N' * failed_parts_len))
                     self.failed_parts = struct.unpack('N' * failed_parts_len, data)
@@ -218,13 +265,13 @@ class StateFile:
         except:
             pass
 
-    def update(self, begin, written_bytes, failed_parts):
-        self.begin = begin
+    def update(self, offset, written_bytes, failed_parts):
+        self.offset = offset
         self.written_bytes = written_bytes
         self.failed_parts = failed_parts
         failed_parts_len = len(self.failed_parts)
         format = 'NNq' + 'N' * failed_parts_len
-        data = struct.pack(format, self.begin, self.written_bytes, failed_parts_len, *self.failed_parts)
+        data = struct.pack(format, self.offset, self.written_bytes, failed_parts_len, *self.failed_parts)
         with open(self.filename, 'wb') as f:
             f.write(data)
 
@@ -242,36 +289,37 @@ class Manager:
     data_queue = queue.Queue()
 
     def __init__(self, urls, block_size, filename, timeout):
+        self.console = Console()
         self.block_size = block_size
-        self.console = Console(ProgressBar())
-
-        url_filename = ''
+        self.filename = filename
         self.mirrors = {}
         for url in urls:
-            mirror = Mirror(url, self.block_size, timeout)
-            self.mirrors[mirror.name] = mirror
-            if url_filename == '':
-                url_filename = mirror.filename
-            elif url_filename != mirror.filename:
-                self.console.out(other_filename_warning.format(mirror.name, mirror.filename))
+            mirror = Mirror(URL(url), self.block_size, timeout)
+            if self.check_filename(mirror):
+                self.mirrors[mirror.name] = mirror
+        if self.filename == '':
+            self.filename = 'out'
+        self.context = Context(self.filename)
+        self.offset = self.context.offset
+        self.written_bytes = self.context.written_bytes
+        self.failed_parts = deque(self.context.failed_parts)
+        self.file_size = 0
+        self.parts_in_progress = []
 
-        if filename is None:
-            self.filename = url_filename
-            if self.filename == '':
-                self.filename = 'out'
-        else:
-            self.filename = filename
+    def check_filename(self, mirror):
+        if self.filename == '':
+            if mirror.filename == '':
+                self.console.out(empty_filename_warning.format(mirror.name))
+                return self.console.ask(anyway_download_question.format(mirror.name), False)
+            self.filename = mirror.filename
+            return True
+        if self.filename == mirror.filename:
+            return True
+        self.console.out(other_filename_warning.format(mirror.name, self.filename))
+        return self.console.ask(anyway_download_question.format(mirror.name), False)
 
-    def download(self):
-        statefile = StateFile(self.filename)
-        begin = statefile.begin
-        written_bytes = statefile.written_bytes
-        failed_parts = deque(statefile.failed_parts)
-        parts_in_progress = []
-        file_size = 0
+    def wait_connections(self):
         wait_mirrors = self.mirrors.copy()
-        speeds = {}
-
         while len(wait_mirrors) > 0:
             remain_mirrors = {}
             for name, mirror in wait_mirrors.items():
@@ -280,73 +328,76 @@ class Manager:
                 else:
                     self.console.out(connected_msg.format(name))
             wait_mirrors = remain_mirrors
+
+    def give_task(self, mirror):
+        if len(self.failed_parts) > 0:
+            new_part = self.failed_parts.popleft()
+            self.parts_in_progress.append(new_part)
+            mirror.download(new_part)
+        elif self.offset <= self.file_size:
+            self.parts_in_progress.append(self.offset)
+            mirror.download(self.offset)
+            self.offset += self.block_size
+
+    def download(self):
+        speeds = {}
+        self.wait_connections()
         print()
 
-        with open(self.filename, statefile.open_mode) as outfile:
+        with open(self.filename, self.context.open_mode) as outfile:
             for mirror in self.mirrors.values():
-                mirror.download(begin)
-                parts_in_progress.append(begin)
-                begin += self.block_size
+                self.give_task(mirror)
 
-            while file_size == 0 or written_bytes < file_size:
+            while self.file_size == 0 or self.written_bytes < self.file_size:
                 part = self.data_queue.get()
+                mirror = self.mirrors[part.name]
+                mirror.thread.join()
 
                 try:
                     assert part.status != 0, connection_error.format(part.name)
                     assert part.status != 200, no_partial_error.format(part.name)
                     assert part.status == 206, http_error.format(part.status)
 
-                    if file_size == 0:
-                        file_size = part.file_size
-                        self.console.progressbar.total = file_size
-                        outfile.seek(part.file_size - 1, 0)
+                    if self.file_size == 0:
+                        self.file_size = part.file_size
+                        self.console.progressbar.total = self.file_size
+                        outfile.seek(self.file_size - 1, 0)
                         outfile.write(b'\x00')
-                        self.console.out(downloading_msg.format(self.filename, part.file_size, calc_units(part.file_size)))
+                        self.console.out(downloading_msg.format(self.filename, self.file_size, calc_units(self.file_size)))
 
-                    assert file_size == part.file_size, filesize_error.format(part.name, part.file_size, file_size)
+                    assert self.file_size == part.file_size, filesize_error.format(part.name, part.file_size, self.file_size)
 
-                    outfile.seek(part.begin, 0)
+                    outfile.seek(part.offset, 0)
                     size = outfile.write(part.data)
-                    written_bytes += size
+                    self.written_bytes += size
 
-                    parts_in_progress.remove(part.begin)
-
-                    mirror = self.mirrors[part.name]
-                    mirror.thread.join()
+                    self.parts_in_progress.remove(part.offset)
 
                     speed = size / mirror.thread.time
                     speeds[part.name] = speed
-                    self.console.progress(written_bytes, sum(speeds.values()))
+                    self.console.progress(self.written_bytes, sum(speeds.values()))
 
-                    if len(failed_parts) > 0:
-                        new_part = failed_parts.popleft()
-                        parts_in_progress.append(new_part)
-                        mirror.download(new_part)
-                    elif begin < file_size:
-                        parts_in_progress.append(begin)
-                        mirror.download(begin)
-                        begin += self.block_size
+                    self.give_task(mirror)
 
                 except AssertionError as e:
                     self.console.out(str(e))
-                    failed_parts.append(part.begin)
-                    self.mirrors[part.name].thread.join()
-                    self.mirrors[part.name].close()
+                    self.failed_parts.append(part.offset)
+                    mirror.thread.join()
+                    mirror.close()
                     del self.mirrors[part.name]
                     if len(self.mirrors) == 0:
                         return 1
                 finally:
-                    needle_parts = parts_in_progress.copy()
-                    needle_parts.extend(failed_parts)
-                    statefile.update(begin, written_bytes, needle_parts)
+                    needle_parts = self.parts_in_progress.copy()
+                    needle_parts.extend(self.failed_parts)
+                    self.context.update(self.offset, self.written_bytes, needle_parts)
 
             for mirror in self.mirrors.values():
                 mirror.thread.join()
                 mirror.close()
             print()
 
-        
-        statefile.delete()
+        self.context.delete()
         return 0
 
 
@@ -357,7 +408,7 @@ if __name__ == '__main__':
     print(start_msg.format(VERSION))
 
     block_size = 4 * 2**20
-    filename = None
+    filename = ''
     timeout = 10
     urls = []
 
