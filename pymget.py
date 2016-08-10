@@ -9,7 +9,7 @@ import time, struct, re
 import ftplib
 from abc import ABCMeta, abstractproperty
 
-VERSION = '1.14'
+VERSION = '1.15'
 
 start_msg = '\nPyMGet v{}\n'
 
@@ -54,22 +54,24 @@ def calc_units(size):
 
 class ProgressBar:
 
-    WIDTH = 58
+    WIDTH = 57
 
     def __init__(self):
         self.total = 0
 
     def update(self, complete, speed):
         if self.total != 0:
-            progress = round(self.WIDTH * complete / self.total)
+            percent = complete / self.total
+            progress = round(self.WIDTH * percent)
             speed_str = '{}/s'.format(calc_units(speed))
         else:
+            percent = 0
             progress = 0
             speed_str = ''
 
         progress_str = '[{}]'.format(('#'*progress).ljust(self.WIDTH, '-'))
-        percent_str = '{:.2%}'.format(progress / self.WIDTH)
-        bar = '{0} {1} {2}\r'.format(progress_str, percent_str.rjust(7), speed_str.rjust(11))
+        percent_str = '{:.2%}'.format(percent)
+        bar = '{0} {1} {2}\r'.format(progress_str, percent_str.rjust(7), speed_str.rjust(12))
 
         sys.stdout.write(bar)
         sys.stdout.flush()
@@ -127,12 +129,16 @@ class Console:
 
 class Part:
 
-    def __init__(self, name, status, offset, data=None, file_size=None):
+    def __init__(self, name, status, offset, fragment_offset=0, complete=True, data=None, file_size=None, speed=0, gotten_size=0):
         self.name = name
         self.data = data
         self.status = status
         self.offset = offset
+        self.fragment_offset = fragment_offset
+        self.speed = speed
+        self.complete = complete
         self.file_size = file_size
+        self.gotten_size = gotten_size
 
 
 
@@ -212,6 +218,8 @@ class FTPThread(ConnectionThread):
 
 class DownloadThread(threading.Thread, metaclass=ABCMeta):
 
+    FRAGMENT_SIZE = 32 * 2**10
+
     def __init__(self, url, conn, offset, block_size):
         threading.Thread.__init__(self)
         self.name = url.host
@@ -249,14 +257,21 @@ class HTTXDownloadThread(DownloadThread, metaclass=ABCMeta):
                 status = response.status
                 raise client.HTTPException
             file_size = int(response.getheader('Content-Range').split('/')[-1])
-            data = response.read()
-            part = Part(self.name, response.status, self.offset, data, file_size)
+            part_size = int(response.getheader('Content-Length'))
+            gotten_size = fragment_offset = 0
+            while part_size > gotten_size:
+                data = response.read(self.FRAGMENT_SIZE)
+                self.time = time.time() - self.starttime
+                gotten_size += len(data)
+                speed = gotten_size / self.time
+                part = Part(self.name, response.status, self.offset, fragment_offset, part_size <= gotten_size, data, file_size, speed, gotten_size)
+                fragment_offset = gotten_size
+                Manager.data_queue.put(part)
             response.close()
         except:
             part = Part(self.name, status, self.offset)
-        finally:
-            self.time = time.time() - self.starttime
             Manager.data_queue.put(part)
+        finally:
             self.ready.set()
 
 class HTTPDownloadThread(HTTXDownloadThread):
@@ -273,24 +288,25 @@ class FTPDownloadThread(DownloadThread):
         self.host = url.host
 
     def run(self):
-        data = b''
-        recv_bytes = 0
+        gotten_size = fragment_offset = 0
         try:
             file_size = self.conn.size(self.filename)
             sock = self.conn.transfercmd('RETR ' + self.filename, self.offset)
-            data = b''
-            while recv_bytes < self.block_size:
-                recv_data = sock.recv(self.block_size - recv_bytes)
-                if not recv_data:
+            while gotten_size < self.block_size:
+                data = sock.recv(min(self.block_size - gotten_size, self.FRAGMENT_SIZE))
+                self.time = time.time() - self.starttime
+                gotten_size += len(data)
+                speed = gotten_size / self.time
+                complete = self.block_size - gotten_size <= 0 or file_size - self.offset - gotten_size <= 0
+                part = Part(self.name, 206, self.offset, fragment_offset, complete, data, file_size, speed, gotten_size)
+                fragment_offset = gotten_size
+                Manager.data_queue.put(part)
+                if complete:
                     break
-                data = b''.join([data, recv_data])
-                recv_bytes += len(recv_data)
-            part = Part(self.name, 206, self.offset, data, file_size)
         except:
             part = Part(self.name, 0, self.offset)
-        finally:
-            self.time = time.time() - self.starttime
             Manager.data_queue.put(part)
+        finally:
             self.ready.set()
 
 
@@ -320,6 +336,7 @@ class Mirror(metaclass=ABCMeta):
         self.dnl_active = False
         self.conn = None
         self.connected = False
+        self.dnl_thread = None
         self.conn_thread = self.connection_thread(self.url, self.timeout)
         self.conn_thread.start()
 
@@ -339,6 +356,7 @@ class Mirror(metaclass=ABCMeta):
         return True
 
     def download(self, offset):
+        self.join()
         self.dnl_thread = self.download_thread(self.url, self.conn, offset, self.block_size)
         self.dnl_active = True
         self.dnl_thread.start()
@@ -406,7 +424,7 @@ class FTPMirror(Mirror):
 
     @property
     def connection_thread(self):
-        return FTPhread
+        return FTPThread
 
     @property
     def download_thread(self):
@@ -433,7 +451,12 @@ class Context:
         except:
             pass
 
+    def modified(self, offset, written_bytes, failed_parts):
+        return self.offset != offset or self.written_bytes != written_bytes or set(self.failed_parts) ^ set(failed_parts)
+
     def update(self, offset, written_bytes, failed_parts):
+        if not self.modified(offset, written_bytes, failed_parts):
+            return
         self.offset = offset
         self.written_bytes = written_bytes
         self.failed_parts = failed_parts
@@ -493,13 +516,9 @@ class Manager:
 
     def wait_connections(self):
         active = 0
-        while True:
-            for mirror in self.mirrors.values():
-                if mirror.wait_connection():
-                    self.give_task(mirror)
-                    active += 1
-            if active > 0:
-                break
+        for mirror in self.mirrors.values():
+            if mirror.wait_connection():
+                self.give_task(mirror)
 
     def give_task(self, mirror):
         if len(self.failed_parts) > 0:
@@ -513,60 +532,74 @@ class Manager:
 
     def download(self):
         speeds = {}
+        gotten_sizes = {}
         with open(self.filename, self.context.open_mode) as outfile:
             while self.file_size == 0 or self.written_bytes < self.file_size:
                 self.wait_connections()
-                part = self.data_queue.get()
-                mirror = self.mirrors[part.name]
-                mirror.join()
 
-                self.parts_in_progress.remove(part.offset)
-
-                try:
+                while True:
                     try:
-                        if part.status // 100 == 3:
-                            raise MirrorRedirect(mirror.dnl_thread.location)
+                        part = self.data_queue.get(False, 0.01)
+                        mirror = self.mirrors[part.name]
 
-                        assert part.status != 0, connection_error.format(part.name)
-                        assert part.status != 200, no_partial_error.format(part.name)
-                        assert part.status == 206, http_error.format(part.status)
+                        if part.complete:
+                            self.parts_in_progress.remove(part.offset)
 
-                        if self.file_size == 0:
-                            self.file_size = part.file_size
-                            self.console.progressbar.total = self.file_size
-                            outfile.seek(self.file_size - 1, 0)
-                            outfile.write(b'\x00')
-                            self.console.out(downloading_msg.format(self.filename, self.file_size, calc_units(self.file_size)))
+                        try:
+                            try:
+                                if part.status // 100 == 3:
+                                    raise MirrorRedirect(mirror.dnl_thread.location)
 
-                        assert self.file_size == part.file_size, filesize_error.format(part.name, part.file_size, self.file_size)
+                                assert part.status != 0, connection_error.format(part.name)
+                                assert part.status != 200, no_partial_error.format(part.name)
+                                assert part.status == 206, http_error.format(part.status)
 
-                        outfile.seek(part.offset, 0)
-                        size = outfile.write(part.data)
-                        self.written_bytes += size
+                                if self.file_size == 0:
+                                    self.file_size = part.file_size
+                                    self.console.progressbar.total = self.file_size
+                                    outfile.seek(self.file_size - 1, 0)
+                                    outfile.write(b'\x00')
+                                    self.console.out(downloading_msg.format(self.filename, self.file_size, calc_units(self.file_size)))
 
-                        speed = size / mirror.dnl_thread.time
-                        speeds[part.name] = speed
-                        self.console.progress(self.written_bytes, sum(speeds.values()))
+                                assert self.file_size == part.file_size, filesize_error.format(part.name, part.file_size, self.file_size)
 
-                    except AssertionError as e:
-                        self.console.error(str(e))
-                        raise
-                    except MirrorRedirect as e:
-                        self.console.out(redirect_msg.format(part.name, e.location))
-                        new_mirror = Mirror(URL(e.location), self.block_size, self.timeout)
-                        self.mirrors[new_mirror.name] = new_mirror
-                        raise
-                except:
-                    self.failed_parts.append(part.offset)
-                    mirror.join()
-                    mirror.close()
-                    del self.mirrors[part.name]
-                    if not self.mirrors:
-                        raise DownloadError(download_impossible_error)
-                finally:
-                    needle_parts = self.parts_in_progress.copy()
-                    needle_parts.extend(self.failed_parts)
-                    self.context.update(self.offset, self.written_bytes, needle_parts)
+                                outfile.seek(part.offset + part.fragment_offset, 0)
+                                outfile.write(part.data)
+
+                                speeds[part.name] = part.speed
+                                gotten_sizes[part.name] = part.gotten_size
+
+                                progress = self.written_bytes + sum(gotten_sizes.values())
+                                self.console.progress(progress, sum(speeds.values()))
+
+                                if part.complete:
+                                    self.written_bytes += part.gotten_size
+                                    gotten_sizes[part.name] = 0
+                                    speeds[part.name] = 0
+
+                            except AssertionError as e:
+                                self.console.error(str(e))
+                                raise
+                            except MirrorRedirect as e:
+                                self.console.out(redirect_msg.format(part.name, e.location))
+                                new_mirror = Mirror(URL(e.location), self.block_size, self.timeout)
+                                self.mirrors[new_mirror.name] = new_mirror
+                                raise
+                        except:
+                            self.failed_parts.append(part.offset)
+                            mirror.join()
+                            mirror.close()
+                            del self.mirrors[part.name]
+                            del speeds[part.name]
+                            del gotten_sizes[part.name]
+                            if not self.mirrors:
+                                raise DownloadError(download_impossible_error)
+                        finally:
+                            needle_parts = self.parts_in_progress.copy()
+                            needle_parts.extend(self.failed_parts)
+                            self.context.update(self.offset, self.written_bytes, needle_parts)
+                    except queue.Empty:
+                        break
 
             for mirror in self.mirrors.values():
                 mirror.join()
