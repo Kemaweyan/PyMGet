@@ -9,9 +9,13 @@ import time, struct, re
 import ftplib
 from abc import ABCMeta, abstractmethod, abstractproperty
 
-VERSION = '1.23'
+VERSION = '1.24'
 
 start_msg = '\nPyMGet v{}\n'
+
+help_msg = """
+    
+"""
 
 error_msg = '\nОшибка: '
 warning_msg = '\nВнимание: '
@@ -40,6 +44,7 @@ permission_denied_error = 'отказано в доступе.'
 
 empty_filename_warning = 'невозможно определить имя файла на зеркале {}.'
 other_filename_warning = 'имя файла на зеркале {} отличается от {}. Возможно, это другой файл.'
+unknown_arg_warning = "неизвестный аргумент: '{}'"
 
 anyway_download_question = 'Всё равно использовать зеркало {}? (да/НЕТ):'
 rewrite_file_question = 'Файл {} существует. Вы действительно хотите перезаписать файл? (да/НЕТ):'
@@ -784,30 +789,12 @@ class CommandLine:
         self.filename = ''
         self.timeout = 10
         self.urls = []
+        self.url_re = re.compile('^(?:https?|ftp)://(?:[\w\.-]+(?::\d+)?)/')
+        self.console = Console()
 
-    def get_arg(self, arg):
-        if arg in self.argv:
-            index = self.argv.index(arg)
-            del self.argv[index]
-            return index
-        return None
-
-    def get_param(self, arg):
-        index = self.get_arg(arg)
-        if not index is None:
-            try:
-                param = self.argv[index]
-                del self.argv[index]
-                return param
-            except:
-                raise CommandLineError(wrong_commandline_error + arg_needs_param_error.format(arg))
-        return None
-
-    def get_long_param(self, arg):
-        parts = arg.split('=')
-        if len(parts) < 2:
-            raise CommandLineError(wrong_commandline_error + arg_needs_param_error.format(parts[0]))
-        return parts[1]
+    def show_help(self):
+        self.console.out(help_msg)
+        sys.exit()
 
     def parse_block_size(self, block_size):
         bs_re = re.compile('(\d+)(\w)?')
@@ -828,61 +815,55 @@ class CommandLine:
             raise CommandLineError(wrong_commandline_error + wrong_param_format_error.format('timeout', timeout))
         self.timeout = int(timeout)
 
-    def parse_filename(self, filename):
-        self.filename = filename
-
-    def parse_urls(self, urls_file):
+    def parse_links_file(self, urls_file):
         try:
+            urls = []
             with open(urls_file, 'r') as links:
                 for link in links:
-                    self.urls.append(link.strip('\r\n'))
+                    urls.append(link.strip('\r\n'))
+
+            self.urls.extend(map(lambda url: URL(url), filter(lambda url: self.url_re.match(url), urls)))
+            
         except FileNotFoundError:
             raise CommandLineError(file_not_found_error.format(urls_file))
         except PermissionError:
             raise CommandLineError(file_permission_error.format(urls_file))
         except UnicodeDecodeError:
             raise CommandLineError(file_is_corrupted_error.format(urls_file))
+     
+    def parse_out_file(self, filename):
+        self.filename = filename
 
-    def parse_long_args(self):
-        remain_args = []
-        for arg in self.argv:
-            if arg.startswith('--block-size'):
-                block_size = self.get_long_param(arg)
-                self.parse_block_size(block_size)
-            elif arg.startswith('--timeout'):
-                timeout = self.get_long_param(arg)
-                self.parse_timeout(timeout)
-            elif arg.startswith('--out-file'):
-                filename = self.get_long_param(arg)
-                self.parse_filename(filename)
-            elif arg.startswith('--links-file'):
-                urls_file = self.get_long_param(arg)
-                self.parse_urls(urls_file)
-            else:
-                remain_args.append(arg)
-        self.argv = remain_args
+    def parse_long_arg(self, arg):
+        name, param = arg.split('=')
+        return param
 
     def parse(self):
-        block_size = self.get_param('-b')
-        if block_size:
-            self.parse_block_size(block_size)
-
-        timeout = self.get_param('-T')
-        if timeout:
-            self.parse_timeout(timeout)
-
-        filename = self.get_param('-o')
-        if filename:
-            self.parse_filename(filename)
-
-        urls_file = self.get_param('-l')
-        if urls_file:
-            self.parse_urls(urls_file)
-
-        self.parse_long_args()
-        self.urls.extend(self.argv)
-        url_re = re.compile('^(?:https?|ftp)://(?:[\w\.-]+(?::\d+)?)/')
-        self.urls = map(lambda url: URL(url), filter(lambda url: url_re.match(url), self.urls))
+        args_iterator = iter(sys.argv)
+        next(args_iterator)
+        for arg in args_iterator:
+            if arg == '-h' or arg == '--help':
+                self.show_help()
+            elif arg == '-b':
+                self.parse_block_size(next(args_iterator))
+            elif arg == '-T':
+                self.parse_timeout(next(args_iterator))
+            elif arg == '-l':
+                self.parse_links_file(next(args_iterator))
+            elif arg == '-o':
+                self.parse_out_file(next(args_iterator))
+            elif arg.startswith('--block-size='):
+                self.parse_block_size(self.parse_long_arg(arg))
+            elif arg.startswith('--timeout='):
+                self.parse_timeout(self.parse_long_arg(arg))
+            elif arg.startswith('--links-file='):
+                self.parse_links_file(self.parse_long_arg(arg))
+            elif arg.startswith('--out-file='):
+                self.parse_out_file(self.parse_long_arg(arg))
+            elif self.url_re.match(arg):
+                self.urls.append(arg)
+            else:
+                self.console.warning(unknown_arg_warning.format(arg))
 
 
 
