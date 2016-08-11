@@ -3,13 +3,13 @@
 
 import sys, os
 import threading, queue
-from http import client
 from collections import deque
 import time, struct, re, textwrap
+from http import client
 import ftplib
 from abc import ABCMeta, abstractmethod, abstractproperty
 
-VERSION = '1.26'
+VERSION = '1.27'
 
 start_msg = '\nPyMGet v{}\n'
 
@@ -92,6 +92,7 @@ class CancelError(Exception): pass
 class CommandLineError(Exception): pass
 class URLError(Exception): pass
 class MirrorError(Exception): pass
+class FileSizeError(Exception): pass
 
 
 
@@ -126,7 +127,6 @@ def calc_units(size):
     :return: строка, состоящая из величины и единиц измерения, тип str
 
     """
-
     if size >= 2**40:
         return '{:.2f}TiB'.format(size / 2**40)
     if size >= 2**30:
@@ -149,7 +149,6 @@ class ProgressBar:
     Для изменения прогресса используется метод update
 
     """
-
     WIDTH = 57 # ширина прогрессбара, вычисляется как 80 - [ширина всего остального]
 
     def __init__(self):
@@ -216,7 +215,6 @@ class Console:
     progress: выводит/обновляет прогрессбар
 
     """
-
     def __init__(self):
         self.newline = True
         self.progressbar = ProgressBar()
@@ -307,7 +305,6 @@ class URL:
     Класс адреса URL. Поддерживаемые протоколы: HTTP/HTTPS/FTP
 
     """
-
     def __init__(self, url):
 
         """
@@ -361,7 +358,6 @@ class ConnectionThread(NetworkThread):
     Базовый абстрактный класс для классов соединений.
 
     """
-
     def __init__(self, url, timeout):
 
         """
@@ -399,6 +395,36 @@ class HTTXThread(ConnectionThread):
     Базовый класс для HTTP и HTTPS протоколов
 
     """
+    def redirect(self, location, status):
+        
+        """
+        Создаёт часть для перенаправления запроса.
+
+        """
+        url = ''
+        # строка location может быть как полным адресом, так и частичным.
+        # Кроме того, частичный адрес может начинаться с /, т.е. с корневого каталога сервера,
+        # или же быть относительным текущего пути.
+        # Поэтому location разбиваем на 3 части:
+        # 1) хост с указанием протокола http(s)://site.com
+        # 2) остальная часть ссылки (включая первый / если он есть)
+        # 3) начальный / если есть
+        redirect_re = re.compile('^(https?://[^/]+)?((/)?(?:.*))$', re.I)
+        matches = redirect_re.match(location)
+        if not matches:
+            return HeadErrorPart(self.url.host, status)
+        if matches.group(1): # если location содержит хост
+            url = location # значит путь полный, перенаправляем на него
+        elif matches.group(3): # если location начинаеся с /
+            # значит путь задан относительн окорня сервера
+            # добавляем путь к хосту
+            url = '{}://{}{}'.format(self.url.protocol, self.url.host, matches.group(2))
+        else: # путь задан относительно текущего каталога
+            # выделяем из запроса путь
+            path = self.url.request.rsplit('/', 1)[0] + '/'
+            # добавляем новый путь к текущему каталогу, а также хосту
+            url = '{}://{}{}'.format(self.url.protocol, self.url.host, path + matches.group(2))
+        return RedirectPart(self.url.host, status, URL(url))
 
     def connect(self):
         
@@ -418,14 +444,7 @@ class HTTXThread(ConnectionThread):
         # если статус 3xx
         if response.status // 100 == 3:
             location = response.getheader('Location')
-            path = ''
-            # XXX: переписать через re
-            if not location.startswith('http'):
-                if not location.startswith('/'):
-                    path = '/' + self.url.request.rsplit('/', 1)[0]
-                location = '{}://{}{}'.format(self.url.protocol, self.url.host, path + location)
-            # возвращает часть для перенаправления
-            return RedirectPart(self.url.host, response.status, URL(location))
+            return self.redirect(location, response.status)
 
         if response.status != 200: # ошибка HTTP(S)
             return HeadErrorPart(self.url.host, response.status)
@@ -467,7 +486,6 @@ class FTPThread(ConnectionThread):
     Класс для подключения по протоколу FTP.
 
     """
-
     def connect(self):
         """
         Осуществляет анонимное подключение к FTP серверу, переходит в каталог
@@ -1058,7 +1076,11 @@ class HeadPart(Part):
         Выполняется в случае корректного соединения с сервером
 
         """
-        manager.set_file_size(self) # указывает размер файла менеджеру
+        try:
+            manager.set_file_size(self) # указывает размер файла менеджеру
+        except FileSizeError:
+            self.console.error(filesize_error.format(self.name, self.file_size, manager.file_size))
+            manager.delete_mirror(self.name) # удаляем зеркало
 
 class RedirectPart(Part):
 
@@ -1197,17 +1219,7 @@ class Manager:
         self.mirrors = {} # зеркала
         self.gotten_sizes = {} # кол-во полученных байт в активных заданиях, необходимо для вычисления прогресса
         for url in urls:
-            try:
-                # пробуем создать зеркало
-                mirror = Mirror.create(url, self.block_size, self.timeout) # XXX: переписать через Manager.create_mirror
-                # если имя файла не проходит проверку
-                if not self.check_filename(mirror):
-                    # ошибка адреса
-                    raise URLError(mirror.filename)
-                self.mirrors[url.host] = mirror # добавляем зеркало в список
-                self.gotten_sizes[url.host] = 0 # создаём элемент в списке прогресса активных заданий
-            except URLError as e: # ошибка адреса
-                self.console.error(str(e)) # выводим сообщение об ошибке
+            self.create_mirror(url) # пробуем создать зеркало
         if not self.mirrors: # если нет зеркал
             raise FatalError(no_mirrors_error) # критическая ошибка
         if self.filename == '': # если имя файла не определилось
@@ -1220,6 +1232,26 @@ class Manager:
         self.failed_parts = deque(self.context.failed_parts) # загружаем из контекста список неудачных частей
         self.file_size = 0 # размер файла равен нулю, определится после соединения
         self.parts_in_progress = [] # список активных заданий
+
+    def create_mirror(self, url):
+
+        """
+        Создаёт зеркало и добавляет его в список.
+        В случае неудачи выводит сообщение об ошибке.
+
+        :url: объект URL, описывающий адрес для скачивания, тип URL
+
+        """
+        try:
+            mirror = Mirror.create(url, self.block_size, self.timeout)
+            # если имя файла не проходит проверку
+            if not self.check_filename(mirror):
+                raise URLError(mirror.filename) # ошибка адреса
+        except URLError as e: # ошибка адреса
+            self.console.error(str(e)) # выводим сообщение об ошибке
+        else:
+            self.mirrors[url.host] = mirror # добавляем зеркало в список
+            self.gotten_sizes[url.host] = 0 # создаём элемент в списке прогресса активных заданий
 
     def check_filename(self, mirror):
 
@@ -1246,7 +1278,8 @@ class Manager:
     def wait_connections(self):
 
         """
-        Ожидает завершения потоков, в случае необходимости запускает подключение и раздаёт задания.
+        Ожидает завершения потоков, в случае необходимости
+        запускает подключение и раздаёт задания.
 
         """
         for name, mirror in self.mirrors.items():
@@ -1356,11 +1389,7 @@ class Manager:
             self.outfile.write(b'\x00') # пишем ноль
             self.console.out(downloading_msg.format(self.filename, self.file_size, calc_units(self.file_size)))
         elif self.file_size != part.file_size: # запуск не первый и размер файла отличается
-            # значит файл "битый" или вообще другой
-            # выводим сообщение об ошибке
-            self.console.error(filesize_error.format(part.name, part.file_size, part.file_size))
-            self.delete_mirror(part.name) # удаляем зеркало
-            return # XXX заменить на исключение
+            raise FileSizeError # значит файл "битый" или вообще другой
         mirror = self.mirrors[part.name]
         mirror.file_size = part.file_size # зеркалу также сообщаем имя файла
         mirror.ready = True # зеркало готово качать следующую часть
@@ -1376,9 +1405,7 @@ class Manager:
 
         """
         self.delete_mirror(part.name)
-        mirror = Mirror.create(part.location, self.block_size, self.timeout) # XXX: переписать через Manager.create_mirror
-        self.mirrors[mirror.name] = mirror # XXX: переписать через Manager.create_mirror
-        self.gotten_sizes[mirror.name] = 0 # XXX: переписать через Manager.create_mirror
+        self.create_mirror(part.location)
         self.console.out(redirect_msg.format(part.name, part.location.url))
 
     def error(self, part):
