@@ -9,9 +9,9 @@ from http import client
 import ftplib
 from abc import ABCMeta, abstractmethod, abstractproperty
 
-VERSION = '1.28'
+VERSION = '1.29'
 
-start_msg = '\nPyMGet v{}\n'
+start_msg = '\nMultiGet v{}\n'
 
 help_msg = """
     Программа предназначена для параллельного скачивания файлов с нескольких зеркал.
@@ -341,7 +341,7 @@ class NetworkThread(threading.Thread, metaclass=ABCMeta):
 
     """
     # строка user_agent для передачи HTTP(S) серверам
-    user_agent = 'PyMGet/{} ({} {}, {})'.format(VERSION, os.uname().sysname, os.uname().machine, os.uname().release)
+    user_agent = 'MultiGet/{} ({} {}, {})'.format(VERSION, os.uname().sysname, os.uname().machine, os.uname().release)
 
     def __init__(self):
         threading.Thread.__init__(self)
@@ -553,26 +553,22 @@ class HTTXDownloadThread(DownloadThread):
                 status = response.status
                 raise MirrorError
             part_size = int(response.getheader('Content-Length')) # столько байт сервер передал клиенту
-            gotten_size = 0 # количество полученных байт
-            fragment_offset = 0 # смещение первого байта следующего фрагмента
+            data = b'' # буфер для данных
             # цикл пока не получены все переданные байты
-            while part_size > gotten_size:
-                data = response.read(self.FRAGMENT_SIZE)
-                gotten_size += len(data) # нельзя просто добавлять FRAGMENT_SIZE, т.к. последний фрагмент может быть меньше этого размера
-                if part_size <= gotten_size: # получены все байты или даже боьше :-)
-                    # добавляем в очередь «финальную» часть
-                    part = FinalDataPart(self.url.host, response.status, self.offset, fragment_offset, data, gotten_size)
-                else:
-                    # не все ещё байты получены - просто добавляем в очередь часть с данными
-                    part = DataPart(self.url.host, response.status, self.offset, fragment_offset, data, gotten_size)
-                fragment_offset = gotten_size # смещение следующего фрагмента равно кол-ву уже полученных (добавленных в очередь) байт
+            while part_size > len(data):
+                data_fragment = response.read(self.FRAGMENT_SIZE)
+                data += data_fragment # добаляем данные в буффер
+                # добавляем в очередь часть прогресса
+                part = ProgressPart(self.url.host, response.status, len(data))
                 Manager.data_queue.put(part)
+            # после завершения цикла создаём часть с данными
+            part = DataPart(self.url.host, response.status, self.offset, data)
             response.close()
         except:
             # в случае ошибки помещаем в очередь часть со статусом
             part = ErrorPart(self.url.host, status, self.offset)
-            Manager.data_queue.put(part)
         finally:
+            Manager.data_queue.put(part) # отправляем часть с данными или ошибкой
             self.ready.set() # в конце помечаем поток завершенным
 
 class FTPDownloadThread(DownloadThread):
@@ -600,36 +596,32 @@ class FTPDownloadThread(DownloadThread):
         Функция скачивания, выполняется в отдельном потоке
 
         """
-        gotten_size = 0 # количество полученных байт
-        fragment_offset = 0 # смещение первого байта следующего фрагмента
+        data = b'' # буфер для данных
         try:
             sock = self.conn.transfercmd('RETR ' + self.url.filename, self.offset)
             # цикл пока получено байт меньше, чем размер блока
             # однако, последний блок может быть меньше этого размера, т.к. размер файла не обязательно кратен размеру блоку
-            while gotten_size < self.block_size:
+            while len(data) < self.block_size:
                 # получаем данные, но не более размера фрагмента 
                 # и кол-ва данных, оставшихся до целого блока
-                data = sock.recv(min(self.block_size - gotten_size, self.FRAGMENT_SIZE))
-                if not data: # в случае отсутствия данных - ошибка
+                data_fragment = sock.recv(min(self.block_size - len(data), self.FRAGMENT_SIZE))
+                if not data_fragment: # в случае отсутствия данных - ошибка
                     raise MirrorError
-                gotten_size += len(data) # добавляем фактически полученные данные
+                data += data_fragment # добавляем данные в буфер
+                part = ProgressPart(self.url.host, 206, len(data))
+                Manager.data_queue.put(part)
                 # считаем блок завершенным, если получено байт больше или равно размеру блоку
                 # или если достингнут конец файла
-                complete = self.block_size - gotten_size <= 0 or self.file_size - self.offset - gotten_size <= 0
-                if complete:
-                    part = FinalDataPart(self.url.host, 206, self.offset, fragment_offset, data, gotten_size)
-                else:
-                    part = DataPart(self.url.host, 206, self.offset, fragment_offset, data, gotten_size)
-                fragment_offset = gotten_size # смещение следующего фрагмента равно кол-ву уже полученных (добавленных в очередь) байт
-                Manager.data_queue.put(part)
-                if complete: # если блок завершен - выходим из цикла
+                if self.block_size - len(data) <= 0 or self.file_size - self.offset - len(data) <= 0:
                     break
+            # после завершения цикла создаём часть с данными
+            part = DataPart(self.url.host, 206, self.offset, data)
             sock.close()
         except:
             # в случае ошибки создаём часть с кодом 0, т.е. ошибка подключения
             part = ErrorPart(self.url.host, 0, self.offset)
-            Manager.data_queue.put(part)
         finally:
+            Manager.data_queue.put(part) # помещаем в очередь часть с данными или ошибкой
             self.ready.set() # в конце помечаем поток завершенным
 
 
@@ -1083,6 +1075,31 @@ class RedirectPart(Part):
         """
         manager.redirect(self) # перенаправляем
 
+class ProgressPart(Part):
+
+    """
+    Часть, сообщающая основному потоку прогресс скачивания.
+    
+    """
+    def __init__(self, name, status, gotten_size):
+
+        """
+        :name: имя зеркала, которое отправило часть, тип str
+        :status: статус выполнения операции потоком, тип int
+        ：gotten_size： количество данных, полученных за данный сеанс, тип int
+
+        """
+        Part.__init__(self, name, status)
+        self.gotten_size = gotten_size
+
+    def process(self, manager):
+
+        """
+        Устанавливает прогресс текущего задания.
+
+        """
+        manager.set_progress(self) # помечаем задание выполненым
+
 class HeadErrorPart(Part):
 
     """
@@ -1127,21 +1144,17 @@ class DataPart(ErrorPart):
     Часть с данными.
     
     """
-    def __init__(self, name, status, offset, fragment_offset, data, gotten_size):
+    def __init__(self, name, status, offset, data):
 
         """
         :name: имя зеркала, которое отправило часть, тип str
         :status: статус выполнения операции потоком, тип int
         :offset: смещение в задании, тип int
-        :fragment_offset: смещение данных относительно начала файла, тип int
         :data: данные, тип sequence
-        ：gotten_size： количество данных, полученных за данный сеанс, тип int
 
         """
         ErrorPart.__init__(self, name, status, offset)
         self.data = data
-        self.fragment_offset = fragment_offset
-        self.gotten_size = gotten_size
 
     def process(self, manager):
 
@@ -1150,20 +1163,6 @@ class DataPart(ErrorPart):
 
         """
         manager.write_data(self) # пишем данные
-
-class FinalDataPart(DataPart):
-
-    """
-    Финальная часть с данными, задание выполнено.
-    
-    """
-    def process(self, manager):
-
-        """
-        Выполняется при завершении задания
-
-        """
-        manager.task_done(self) # помечаем задание выполненым
 
 
 
@@ -1404,19 +1403,16 @@ class Manager:
             # дальше качать невозможно, завершаем работу
             raise FatalError(download_impossible_error)
 
-    def write_data(self, part):
+    def set_progress(self, part):
 
         """
-        Пишет данные в файл.
+        Обновляет прогресс скачивания файла.
 
-        :part: часть, взятая из очереди, тип DataPart
+        :part: часть, взятая из очереди, тип ProgressPart
 
         """
-        # обновляем кол-во скачанных байт с зеркала
+        # обновляем проресс соответствующего задания
         self.gotten_sizes[part.name] = part.gotten_size
-        # перемещаемся к началу части + смещение внутри части
-        self.outfile.seek(part.offset + part.fragment_offset)
-        self.outfile.write(part.data) # пишем данные
         # прогресс равен ранее записанным данным + сумме скачаного
         # активными заданиями
         progress = self.written_bytes + sum(self.gotten_sizes.values())
@@ -1424,17 +1420,18 @@ class Manager:
         # только скачанное за текущий сеанс
         self.console.progress(progress, progress - self.old_progress)
 
-    def task_done(self, part):
+    def write_data(self, part):
 
         """
-        Выполняется при обработке последнего фрагмента задания.
+        Пишет данные в файл, освобождает зеркало.
 
-        :part: часть, взятая из очереди, тип FinalDataPart
+        :part: часть, взятая из очереди, тип DataPart
 
         """
         self.del_active_part(part.offset) # часть более неактивна
-        self.write_data(part) # пишем данные
-        self.written_bytes += part.gotten_size # увеличиваем число записанных байт
+        self.outfile.seek(part.offset) # перемещаемся к началу части
+        self.outfile.write(part.data) # пишем данные
+        self.written_bytes += len(part.data) # увеличиваем число записанных байт
         self.gotten_sizes[part.name] = 0 # обнуляем кол-во полученных байт активным зеркалом
         mirror = self.mirrors[part.name]
         mirror.done() # помечаем зеркало завершившим скачивание
@@ -1626,7 +1623,7 @@ class CommandLine:
         """
         try:
             urls = []
-            with open(urls_file, 'r') as links: # пробуем открыть файл
+            with open(urls_file, 'r') as links: # пробуем открыть текстовый файл
                 for link in links: # каждую строку из файла
                     urls.append(link.strip('\r\n')) # добавляем в список, отбросив символы перевода строки
             self.urls.extend(urls) # дополняем список ссылок
