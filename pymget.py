@@ -9,7 +9,7 @@ import time, struct, re
 import ftplib
 from abc import ABCMeta, abstractproperty
 
-VERSION = '1.16'
+VERSION = '1.17'
 
 start_msg = '\nPyMGet v{}\n'
 
@@ -19,6 +19,7 @@ warning_msg = '\nВнимание: '
 connected_msg = 'Соединение с сервером {} OK'
 downloading_msg = '\nПолучение файла {} {} байт ({}):'
 redirect_msg = '\nПеренаправление с зеркала {} по адресу {}'
+cancel_msg = 'Операция отменена пользователем.'
 
 connection_error = 'не удалось соединиться с сервером {}'
 no_partial_error = 'сервер {} не поддерживает скачивание по частям.'
@@ -30,11 +31,17 @@ arg_needs_param_error = "Аргумент '{}' требует указания �
 wrong_param_format_error = "Неверный формат параметра '{}': {}"
 file_not_found_error = "Файл '{}' не найден."
 no_mirrors_error = 'Нет зеркал для скачивания.'
+file_open_error = "не удалось открыть файл '{}': {}"
+file_create_error = "не удалось создать файл '{}': {}"
+file_write_error = "запись в файл '{}' завершилась неудачей."
+permission_denied_error = 'отказано в доступе.'
 
 empty_filename_warning = 'невозможно определить имя файла на зеркале {}. Возможно, это другой файл.'
 other_filename_warning = 'имя файла на зеркале {} отличается от {}. Возможно, это другой файл.'
 
-anyway_download_question = 'Всё равно использовать зеркало {}? (да/Нет):'
+anyway_download_question = 'Всё равно использовать зеркало {}? (да/НЕТ):'
+rewrite_file_question = 'Файл {} существует. Вы действительно хотите перезаписать файл? (да/НЕТ):'
+file_create_question = 'Файл {} не найден. Начать скачивание заново? (ДА/нет):'
 
 
 
@@ -114,10 +121,12 @@ class Console:
         self.newline = '\n' in end or text.endswith('\n')
 
     def error(self, text, end='\n'):
-        self.out(error_msg + text, end)
+        if text:
+            self.out(error_msg + text, end)
 
     def warning(self, text, end='\n'):
-        self.out(warning_msg + text, end)
+        if text:
+            self.out(warning_msg + text, end)
 
     def progress(self, complete):
         if self.newline:
@@ -442,6 +451,7 @@ class FTPMirror(Mirror):
 
 
 
+@singleton
 class Context:
 
     def __init__(self, filename):
@@ -449,7 +459,6 @@ class Context:
         self.failed_parts = []
         self.offset = 0
         self.written_bytes = 0
-        self.open_mode = 'wb'
         try:
             with open(self.filename, 'rb') as f:
                 data = f.read(struct.calcsize('NNq'))
@@ -457,9 +466,9 @@ class Context:
                 if failed_parts_len > 0:
                     data = f.read(struct.calcsize('N' * failed_parts_len))
                     self.failed_parts = struct.unpack('N' * failed_parts_len, data)
-                self.open_mode = 'rb+'
+            self.exists = True
         except:
-            pass
+            self.exists = False
 
     def modified(self, offset, written_bytes, failed_parts):
         return self.offset != offset or self.written_bytes != written_bytes or set(self.failed_parts) ^ set(failed_parts)
@@ -476,11 +485,69 @@ class Context:
         with open(self.filename, 'wb') as f:
             f.write(data)
 
+    def reset(self):
+        self.update(0, 0, [])
+
     def delete(self):
         try:
             os.remove(self.filename)
         except:
             pass
+
+
+
+
+class FileError(Exception): pass
+class CancelError(Exception): pass
+
+class OutputFile:
+
+    def __init__(self, filename):
+        self.filename = filename
+        self.console = Console()
+        self.context = Context(self.filename)
+        self.file = self.open_file(self.context.exists)
+
+    def open_file(self, context_exists):
+        if context_exists:
+            try:
+                return open(self.filename, 'rb+')
+            except:
+                if os.path.isfile(self.filename):
+                    raise FileError(file_open_error.format(self.filename, permission_denied_error))
+                if not self.console.ask(file_create_question.format(self.filename), True):
+                    raise CancelError(cancel_msg)
+                self.context.reset()
+                return self.open_file(False)
+        else:
+            if os.path.isfile(self.filename):
+                if not self.console.ask(rewrite_file_question.format(self.filename), False):
+                    raise CancelError(cancel_msg)
+            try:
+                return open(self.filename, 'wb')
+            except:
+                raise FileError(file_create_error.format(self.filename, permission_denied_error))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exception_type, exception_value, traceback):
+        try:
+            self.file.close()
+        except:
+            return False
+
+    def seek(self, offset):
+        try:
+            self.file.seek(offset, 0)
+        except:
+            raise FileError(file_write_error.format(self.filename))
+
+    def write(self, data):
+        try:
+            return self.file.write(data)
+        except:
+            raise FileError(file_write_error.format(self.filename))
 
 
 
@@ -506,6 +573,7 @@ class Manager:
         if self.filename == '':
             self.filename = 'out'
         self.context = Context(self.filename)
+        self.outfile = OutputFile(self.filename)
         self.offset = self.context.offset
         self.written_bytes = self.context.written_bytes
         self.failed_parts = deque(self.context.failed_parts)
@@ -542,20 +610,21 @@ class Manager:
 
     def download(self):
         gotten_sizes = {}
-        with open(self.filename, self.context.open_mode) as outfile:
+        with self.outfile:
             while self.file_size == 0 or self.written_bytes < self.file_size:
                 self.wait_connections()
-
                 while True:
                     try:
                         part = self.data_queue.get(False, 0.01)
-                        mirror = self.mirrors[part.name]
-
-                        if part.complete:
-                            self.parts_in_progress.remove(part.offset)
 
                         try:
                             try:
+                                assert part.name in self.mirrors
+                                mirror = self.mirrors[part.name]
+
+                                if part.complete:
+                                    self.parts_in_progress.remove(part.offset)
+
                                 if part.status // 100 == 3:
                                     raise MirrorRedirect(mirror.dnl_thread.location)
 
@@ -566,14 +635,14 @@ class Manager:
                                 if self.file_size == 0:
                                     self.file_size = part.file_size
                                     self.console.progressbar.total = self.file_size
-                                    outfile.seek(self.file_size - 1, 0)
-                                    outfile.write(b'\x00')
+                                    self.outfile.seek(self.file_size - 1)
+                                    self.outfile.write(b'\x00')
                                     self.console.out(downloading_msg.format(self.filename, self.file_size, calc_units(self.file_size)))
 
                                 assert self.file_size == part.file_size, filesize_error.format(part.name, part.file_size, self.file_size)
 
-                                outfile.seek(part.offset + part.fragment_offset, 0)
-                                outfile.write(part.data)
+                                self.outfile.seek(part.offset + part.fragment_offset)
+                                self.outfile.write(part.data)
                                 gotten_sizes[part.name] = part.gotten_size
 
                                 progress = self.written_bytes + sum(gotten_sizes.values())
@@ -593,10 +662,12 @@ class Manager:
                                 raise
                         except:
                             self.failed_parts.append(part.offset)
-                            mirror.join()
-                            mirror.close()
-                            del self.mirrors[part.name]
-                            del gotten_sizes[part.name]
+                            if part.name in self.mirrors:
+                                mirror.join()
+                                mirror.close()
+                                del self.mirrors[part.name]
+                            if part.name in gotten_sizes:
+                                gotten_sizes[part.name]
                             if not self.mirrors:
                                 raise DownloadError(download_impossible_error)
                         finally:
@@ -737,4 +808,8 @@ if __name__ == '__main__':
         console.error(str(e))
     except DownloadError as e:
         console.error(str(e))
+    except FileError as e:
+        console.error(str(e))
+    except CancelError as e:
+        console.out(str(e))
     
