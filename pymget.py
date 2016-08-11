@@ -9,7 +9,7 @@ from http import client
 import ftplib
 from abc import ABCMeta, abstractmethod, abstractproperty
 
-VERSION = '1.27'
+VERSION = '1.28'
 
 start_msg = '\nPyMGet v{}\n'
 
@@ -26,6 +26,9 @@ help_msg = """
      -h                             Вывести справочную информацию.
      --help
 
+     -v                             Вывести информацию о версии.
+     --version
+
      -b размер_блока                Задаёт размер блоков, запрашиваемых у заркал.
      --block-size=размер_блока      По-умолчанию равен 4МБ. Значение может быть 
                                     указано в байтах, килобайтах или мегабайтах. Для
@@ -40,8 +43,8 @@ help_msg = """
                                     сервере. Если имя файла определить невозможно, 
                                     используется имя out.
 
-     -l имя_файла                   Задаёт файл со списком ссылок, где каждая ссылка
-     --list_urls=имя_файла          располагается на отдельной строке. Ссылки из 
+     -u имя_файла                   Задаёт файл со списком ссылок, где каждая ссылка
+     --urls-file=имя_файла          располагается на отдельной строке. Ссылки из 
                                     этого файла добавляются к ссылкам из командной 
                                     строки.
 
@@ -522,9 +525,8 @@ class DownloadThread(NetworkThread):
 
         """
         NetworkThread.__init__(self)
-        self.name = url.host
+        self.url = url
         self.conn = conn
-        self.request = url.request
         self.offset = offset
         self.block_size = block_size
 
@@ -540,11 +542,11 @@ class HTTXDownloadThread(DownloadThread):
 
         """
         # в заголовке передаёт диапазон скачивания от offset до offset + block_size - 1 (включительно)
-        headers = {'User-Agent': self.user_agent, 'Refferer': '{}://{}/'.format(self.protocol, self.name), 
+        headers = {'User-Agent': self.user_agent, 'Refferer': '{}://{}/'.format(self.url.protocol, self.url.host), 
                     'Range': 'bytes={}-{}'.format(self.offset, self.offset + self.block_size - 1)}
         status = 0 # изначально статус 0, что значит ошибку соединения
         try:
-            self.conn.request('GET', self.request, headers=headers)
+            self.conn.request('GET', self.url.request, headers=headers)
             response = self.conn.getresponse()
             # сервер не поддерживает скачивание по частям - ошибка
             if response.status != 206:
@@ -559,39 +561,19 @@ class HTTXDownloadThread(DownloadThread):
                 gotten_size += len(data) # нельзя просто добавлять FRAGMENT_SIZE, т.к. последний фрагмент может быть меньше этого размера
                 if part_size <= gotten_size: # получены все байты или даже боьше :-)
                     # добавляем в очередь «финальную» часть
-                    part = FinalDataPart(self.name, response.status, self.offset, fragment_offset, data, gotten_size)
+                    part = FinalDataPart(self.url.host, response.status, self.offset, fragment_offset, data, gotten_size)
                 else:
                     # не все ещё байты получены - просто добавляем в очередь часть с данными
-                    part = DataPart(self.name, response.status, self.offset, fragment_offset, data, gotten_size)
+                    part = DataPart(self.url.host, response.status, self.offset, fragment_offset, data, gotten_size)
                 fragment_offset = gotten_size # смещение следующего фрагмента равно кол-ву уже полученных (добавленных в очередь) байт
                 Manager.data_queue.put(part)
             response.close()
         except:
             # в случае ошибки помещаем в очередь часть со статусом
-            part = ErrorPart(self.name, status, self.offset)
+            part = ErrorPart(self.url.host, status, self.offset)
             Manager.data_queue.put(part)
         finally:
             self.ready.set() # в конце помечаем поток завершенным
-
-class HTTPDownloadThread(HTTXDownloadThread):
-
-    """
-    Класс для скачивания с HTTP. Конкретизирует протокол
-
-    """
-    @property
-    def protocol(self):
-        return 'http'
-
-class HTTPSDownloadThread(HTTXDownloadThread):
-
-    """
-    Класс для скачивания с HTTPS. Конкретизирует протокол
-
-    """
-    @property
-    def protocol(self):
-        return 'https'
 
 class FTPDownloadThread(DownloadThread):
 
@@ -610,8 +592,6 @@ class FTPDownloadThread(DownloadThread):
 
         """
         DownloadThread.__init__(self, url, conn, offset, block_size)
-        self.filename = url.filename
-        self.host = url.host
         self.file_size = file_size
 
     def run(self):
@@ -623,11 +603,11 @@ class FTPDownloadThread(DownloadThread):
         gotten_size = 0 # количество полученных байт
         fragment_offset = 0 # смещение первого байта следующего фрагмента
         try:
-            sock = self.conn.transfercmd('RETR ' + self.filename, self.offset)
+            sock = self.conn.transfercmd('RETR ' + self.url.filename, self.offset)
             # цикл пока получено байт меньше, чем размер блока
             # однако, последний блок может быть меньше этого размера, т.к. размер файла не обязательно кратен размеру блоку
             while gotten_size < self.block_size:
-                # получаем даныне, но не более размера фрагмента 
+                # получаем данные, но не более размера фрагмента 
                 # и кол-ва данных, оставшихся до целого блока
                 data = sock.recv(min(self.block_size - gotten_size, self.FRAGMENT_SIZE))
                 if not data: # в случае отсутствия данных - ошибка
@@ -637,9 +617,9 @@ class FTPDownloadThread(DownloadThread):
                 # или если достингнут конец файла
                 complete = self.block_size - gotten_size <= 0 or self.file_size - self.offset - gotten_size <= 0
                 if complete:
-                    part = FinalDataPart(self.name, 206, self.offset, fragment_offset, data, gotten_size)
+                    part = FinalDataPart(self.url.host, 206, self.offset, fragment_offset, data, gotten_size)
                 else:
-                    part = DataPart(self.name, 206, self.offset, fragment_offset, data, gotten_size)
+                    part = DataPart(self.url.host, 206, self.offset, fragment_offset, data, gotten_size)
                 fragment_offset = gotten_size # смещение следующего фрагмента равно кол-ву уже полученных (добавленных в очередь) байт
                 Manager.data_queue.put(part)
                 if complete: # если блок завершен - выходим из цикла
@@ -647,7 +627,7 @@ class FTPDownloadThread(DownloadThread):
             sock.close()
         except:
             # в случае ошибки создаём часть с кодом 0, т.е. ошибка подключения
-            part = ErrorPart(self.name, 0, self.offset)
+            part = ErrorPart(self.url.host, 0, self.offset)
             Manager.data_queue.put(part)
         finally:
             self.ready.set() # в конце помечаем поток завершенным
@@ -808,7 +788,22 @@ class Mirror(metaclass=ABCMeta):
     @abstractproperty
     def download_thread(self): pass # абстрактное свойство, возвращающее класс потока скачивания
 
-class HTTPMirror(Mirror):
+class HTTXMirror(Mirror):
+
+    """
+    Абстрактный базовый класс для HTTP и HTTPS зеркал.
+
+    """
+    @property
+    def download_thread(self):
+
+        """
+        Возвращает класс потока скачивания
+
+        """
+        return HTTXDownloadThread
+
+class HTTPMirror(HTTXMirror):
 
     """
     Класс зеркала HTTP
@@ -823,16 +818,7 @@ class HTTPMirror(Mirror):
         """
         return HTTPThread
 
-    @property
-    def download_thread(self):
-
-        """
-        Возвращает класс потока скачивания
-
-        """
-        return HTTPDownloadThread
-
-class HTTPSMirror(Mirror):
+class HTTPSMirror(HTTXMirror):
 
     """
     Класс зеркала HTTPS
@@ -846,15 +832,6 @@ class HTTPSMirror(Mirror):
 
         """
         return HTTPSThread
-
-    @property
-    def download_thread(self):
-
-        """
-        Возвращает класс потока скачивания
-
-        """
-        return HTTPSDownloadThread
 
 class FTPMirror(Mirror):
 
@@ -1141,7 +1118,7 @@ class ErrorPart(HeadErrorPart):
         Выполняется в случае ошибки скачивания
 
         """
-        manager.add_failed_part(self.offset) # добавляем смещение части в список невыполненых
+        manager.add_failed_parts(self.offset) # добавляем смещение части в список невыполненых
         HeadErrorPart.process(self, manager) # обрабатываем ошибку
 
 class DataPart(ErrorPart):
@@ -1328,7 +1305,6 @@ class Manager:
                             self.context.update(self.offset, self.written_bytes, needle_parts) # сохраняем контекст
                     except queue.Empty: # если очередь пуста
                         break # выходим из цикла (переходим к ожиданию зеркал)
-
             # цикл для завершения работы
             for mirror in self.mirrors.values():
                 mirror.join() # ждём завершения потоков
@@ -1619,9 +1595,9 @@ class CommandLine:
             raise CommandLineError(wrong_commandline_error + wrong_param_format_error.format('block size', block_size))
         self.block_size = int(matches.group(1)) # присваиваем размеру блока числовуч часть параметра
         if matches.group(2): # если указана размерность
-            if matches.group(2).lower() == 'k': # если k или K
+            if matches.group(2) in 'kK': # если k или K
                 self.block_size *= 2**10 # значит в килобайты
-            elif matches.group(2).lower() == 'm': # если m или M
+            elif matches.group(2) in 'mM': # если m или M
                 self.block_size *= 2**20 # значит мегабайты
             else:
                 # иначе - ошибка командной строки
@@ -1640,7 +1616,7 @@ class CommandLine:
             raise CommandLineError(wrong_commandline_error + wrong_param_format_error.format('timeout', timeout))
         self.timeout = int(timeout) # присваиваем таймаут
 
-    def parse_links_file(self, urls_file):
+    def parse_urls_file(self, urls_file):
 
         """
         Парсит параметр файла со списком ссылок.
@@ -1693,15 +1669,17 @@ class CommandLine:
         for arg in args_iterator:
             if arg == '-h' or arg == '--help':
                 self.show_help() # показываем помощь
+            if arg == '-v' or arg == '--version':
+                sys.exit() # информация о версии уже показана, просто выходим
             elif arg == '-b':
                 # парсим размер блока, передав ему следующий элемент
                 self.parse_block_size(next(args_iterator))
             elif arg == '-T':
                 # парсим время ожидания, передав ему следующий элемент
                 self.parse_timeout(next(args_iterator))
-            elif arg == '-l':
+            elif arg == '-u':
                 # парсим файл со списком ссылок, передав ему следующий элемент
-                self.parse_links_file(next(args_iterator))
+                self.parse_urls_file(next(args_iterator))
             elif arg == '-o':
                 # парсим имя выходного файла, передав ему следующий элемент
                 self.parse_out_file(next(args_iterator))
@@ -1711,9 +1689,9 @@ class CommandLine:
             elif arg.startswith('--timeout='):
                 # парсим время ожидания, передав ему длинный параметр
                 self.parse_timeout(self.parse_long_arg(arg))
-            elif arg.startswith('--links-file='):
+            elif arg.startswith('--urls-file='):
                 # парсим файл со списком ссылок, передав ему длинный параметр
-                self.parse_links_file(self.parse_long_arg(arg))
+                self.parse_urls_file(self.parse_long_arg(arg))
             elif arg.startswith('--out-file='):
                 # парсим имя выходного файла, передав ему длинный параметр
                 self.parse_out_file(self.parse_long_arg(arg))
