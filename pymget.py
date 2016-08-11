@@ -5,16 +5,49 @@ import sys, os
 import threading, queue
 from http import client
 from collections import deque
-import time, struct, re
+import time, struct, re, textwrap
 import ftplib
 from abc import ABCMeta, abstractmethod, abstractproperty
 
-VERSION = '1.24'
+VERSION = '1.25'
 
 start_msg = '\nPyMGet v{}\n'
 
 help_msg = """
+    Программа предназначена для параллельного скачивания файлов с нескольких зеркал.
+    Поддерживаемые протоколы: HTTP, HTTPS, FTP. 
     
+    Использование:
+
+     {} [ПАРАМЕТРЫ...] ССЫЛКИ...
+
+    Параметры:
+
+     -h                             Вывести справочную информацию.
+     --help
+
+     -b размер_блока                Задаёт размер блоков, запрашиваемых у заркал.
+     --block-size=размер_блока      По-умолчанию равен 4МБ. Значение может быть 
+                                    указано в байтах, килобайтах или мегабайтах. Для
+                                    этого необходимо после числа добавить символ K 
+                                    или M.
+
+     -T время_ожидания              Задаёт время ожидания ответа сервера в секундах.
+     --timeout=время_ожидания       По-умолчанию равно 10 сек.
+
+     -o имя_файла                   Задаёт имя файла, в который будут сохранены
+     --out-file=имя_файла           данные. По-умолчанию используется имя файла на
+                                    сервере. Если имя файла определить невозможно, 
+                                    используется имя out.
+
+     -l имя_файла                   Задаёт файл со списком ссылок, где каждая ссылка
+     --list_urls=имя_файла          располагается на отдельной строке. Ссылки из 
+                                    этого файла добавляются к ссылкам из командной 
+                                    строки.
+
+    Ссылки должны начинаться с указания протокола http://, https:// или ftp:// и
+    перечисляться через пробел. Если в параметрах указан файл со списком ссылок, то
+    в командной строке ссылки можн оне указывать.
 """
 
 error_msg = '\nОшибка: '
@@ -50,6 +83,19 @@ anyway_download_question = 'Всё равно использовать зерк�
 rewrite_file_question = 'Файл {} существует. Вы действительно хотите перезаписать файл? (да/НЕТ):'
 file_create_question = 'Файл {} не найден. Начать скачивание заново? (ДА/нет):'
 
+
+class FatalError(Exception): pass
+class FileError(Exception): pass
+class CancelError(Exception): pass
+class CommandLineError(Exception): pass
+class URLError(Exception): pass
+class MirrorError(Exception): pass
+
+class MirrorRedirect(Exception):
+
+    def __init__(self, location):
+        Exception.__init__(self)
+        self.location = location
 
 
 def calc_units(size):
@@ -152,71 +198,6 @@ class Console:
 
 
 
-class Part(metaclass=ABCMeta):
-
-    def __init__(self, name, status):
-        self.console = Console()
-        self.name = name
-        self.status = status
-
-    @abstractmethod
-    def process(self, manager): pass
-
-class HeadPart(Part):
-
-    def __init__(self, name, status, file_size):
-        Part.__init__(self, name, status)
-        self.file_size = file_size
-
-    def process(self, manager):
-        manager.set_file_size(self)
-        
-
-class RedirectPart(Part):
-
-    def __init__(self, name, status, location):
-        Part.__init__(self, name, status)
-        self.location = location
-
-    def process(self, manager):
-        manager.redirect(self)
-
-class HeadErrorPart(Part):
-
-    def process(self, manager):
-        manager.error(self)
-
-class ErrorPart(HeadErrorPart):
-
-    def __init__(self, name, status, offset):
-        Part.__init__(self, name, status)
-        self.offset = offset
-
-    def process(self, manager):
-        manager.add_failed_part(self.offset)
-        HeadErrorPart.process(self, manager)
-
-class DataPart(ErrorPart):
-
-    def __init__(self, name, status, offset, fragment_offset, data, gotten_size):
-        ErrorPart.__init__(self, name, status, offset)
-        self.data = data
-        self.fragment_offset = fragment_offset
-        self.gotten_size = gotten_size
-
-    def process(self, manager):
-        manager.write_data(self)
-
-class FinalDataPart(DataPart):
-
-    def process(self, manager):
-        manager.task_done(self)
-
-
-
-
-class URLError(Exception): pass
-
 class URL:
 
     def __init__(self, url):
@@ -255,7 +236,7 @@ class ConnectionThread(threading.Thread, metaclass=ABCMeta):
     @abstractmethod
     def connect(self): pass
 
-class HTTXThread(ConnectionThread, metaclass=ABCMeta):
+class HTTXThread(ConnectionThread):
 
     def connect(self):
         self.conn = self.protocol(self.url.host, timeout=self.timeout)
@@ -318,7 +299,7 @@ class DownloadThread(threading.Thread, metaclass=ABCMeta):
         self.block_size = block_size
         self.ready = threading.Event()
 
-class HTTXDownloadThread(DownloadThread, metaclass=ABCMeta):
+class HTTXDownloadThread(DownloadThread):
 
     user_agent = 'PyMGet/{} ({} {}, {})'.format(VERSION, os.uname().sysname, os.uname().machine, os.uname().release)
 
@@ -331,7 +312,7 @@ class HTTXDownloadThread(DownloadThread, metaclass=ABCMeta):
             response = self.conn.getresponse()
             if response.status != 206:
                 status = response.status
-                raise client.HTTPException
+                raise MirrorError
             part_size = int(response.getheader('Content-Length'))
             gotten_size = fragment_offset = 0
             while part_size > gotten_size:
@@ -344,7 +325,7 @@ class HTTXDownloadThread(DownloadThread, metaclass=ABCMeta):
                 fragment_offset = gotten_size
                 Manager.data_queue.put(part)
             response.close()
-        except Exception as e:
+        except:
             part = ErrorPart(self.name, status, self.offset)
             Manager.data_queue.put(part)
         finally:
@@ -371,7 +352,7 @@ class FTPDownloadThread(DownloadThread):
             while gotten_size < self.block_size:
                 data = sock.recv(min(self.block_size - gotten_size, self.FRAGMENT_SIZE))
                 if not data:
-                    raise Exception
+                    raise MirrorError
                 gotten_size += len(data)
                 complete = self.block_size - gotten_size <= 0 or self.file_size - self.offset - gotten_size <= 0
                 if complete:
@@ -390,13 +371,6 @@ class FTPDownloadThread(DownloadThread):
             self.ready.set()
 
 
-
-
-class MirrorRedirect(Exception):
-
-    def __init__(self, location):
-        Exception.__init__(self)
-        self.location = location
 
 class Mirror(metaclass=ABCMeta):
 
@@ -526,55 +500,6 @@ class FTPMirror(Mirror):
 
 
 
-@singleton
-class Context:
-
-    def __init__(self, filename):
-        self.filename = filename + '.mget'
-        self.failed_parts = []
-        self.offset = 0
-        self.written_bytes = 0
-        try:
-            with open(self.filename, 'rb') as f:
-                data = f.read(struct.calcsize('NNq'))
-                self.offset, self.written_bytes, failed_parts_len = struct.unpack('NNq', data)
-                if failed_parts_len > 0:
-                    data = f.read(struct.calcsize('N' * failed_parts_len))
-                    self.failed_parts = struct.unpack('N' * failed_parts_len, data)
-            self.exists = True
-        except:
-            self.exists = False
-
-    def modified(self, offset, written_bytes, failed_parts):
-        return self.offset != offset or self.written_bytes != written_bytes or set(self.failed_parts) ^ set(failed_parts)
-
-    def update(self, offset, written_bytes, failed_parts):
-        if not self.modified(offset, written_bytes, failed_parts):
-            return
-        self.offset = offset
-        self.written_bytes = written_bytes
-        self.failed_parts = failed_parts
-        failed_parts_len = len(self.failed_parts)
-        format = 'NNq' + 'N' * failed_parts_len
-        data = struct.pack(format, self.offset, self.written_bytes, failed_parts_len, *self.failed_parts)
-        with open(self.filename, 'wb') as f:
-            f.write(data)
-
-    def reset(self):
-        self.update(0, 0, [])
-
-    def delete(self):
-        try:
-            os.remove(self.filename)
-        except:
-            pass
-
-
-
-
-class FileError(Exception): pass
-class CancelError(Exception): pass
-
 class OutputFile:
 
     def __init__(self, filename):
@@ -627,7 +552,67 @@ class OutputFile:
 
 
 
-class DownloadError(Exception): pass
+class Part(metaclass=ABCMeta):
+
+    def __init__(self, name, status):
+        self.console = Console()
+        self.name = name
+        self.status = status
+
+    @abstractmethod
+    def process(self, manager): pass
+
+class HeadPart(Part):
+
+    def __init__(self, name, status, file_size):
+        Part.__init__(self, name, status)
+        self.file_size = file_size
+
+    def process(self, manager):
+        manager.set_file_size(self)
+
+class RedirectPart(Part):
+
+    def __init__(self, name, status, location):
+        Part.__init__(self, name, status)
+        self.location = location
+
+    def process(self, manager):
+        manager.redirect(self)
+
+class HeadErrorPart(Part):
+
+    def process(self, manager):
+        manager.error(self)
+
+class ErrorPart(HeadErrorPart):
+
+    def __init__(self, name, status, offset):
+        Part.__init__(self, name, status)
+        self.offset = offset
+
+    def process(self, manager):
+        manager.add_failed_part(self.offset)
+        HeadErrorPart.process(self, manager)
+
+class DataPart(ErrorPart):
+
+    def __init__(self, name, status, offset, fragment_offset, data, gotten_size):
+        ErrorPart.__init__(self, name, status, offset)
+        self.data = data
+        self.fragment_offset = fragment_offset
+        self.gotten_size = gotten_size
+
+    def process(self, manager):
+        manager.write_data(self)
+
+class FinalDataPart(DataPart):
+
+    def process(self, manager):
+        manager.task_done(self)
+
+
+
 
 class Manager:
 
@@ -637,6 +622,7 @@ class Manager:
         self.console = Console()
         self.block_size = block_size
         self.filename = filename
+        self.given_filename = filename
         self.timeout = timeout
         self.mirrors = {}
         self.gotten_sizes = {}
@@ -647,10 +633,10 @@ class Manager:
                     raise URLError(mirror.filename)
                 self.mirrors[url.host] = mirror
                 self.gotten_sizes[url.host] = 0
-            except Exception as e:
+            except URLError as e:
                 self.console.error(str(e))
         if not self.mirrors:
-            raise DownloadError(no_mirrors_error)
+            raise FatalError(no_mirrors_error)
         if self.filename == '':
             self.filename = 'out'
         self.context = Context(self.filename)
@@ -663,6 +649,8 @@ class Manager:
         self.parts_in_progress = []
 
     def check_filename(self, mirror):
+        if self.given_filename:
+            return True
         if self.filename == '':
             if mirror.filename == '':
                 self.console.warning(empty_filename_warning.format(mirror.name))
@@ -759,7 +747,7 @@ class Manager:
         self.console.error(msg)
         self.delete_mirror(part.name)
         if not self.mirrors:
-            raise DownloadError(download_impossible_error)
+            raise FatalError(download_impossible_error)
 
     def write_data(self, part):
         self.gotten_sizes[part.name] = part.gotten_size
@@ -778,8 +766,50 @@ class Manager:
 
 
 
+@singleton
+class Context:
 
-class CommandLineError(Exception): pass
+    def __init__(self, filename):
+        self.filename = filename + '.mget'
+        self.failed_parts = []
+        self.offset = 0
+        self.written_bytes = 0
+        try:
+            with open(self.filename, 'rb') as f:
+                data = f.read(struct.calcsize('NNq'))
+                self.offset, self.written_bytes, failed_parts_len = struct.unpack('NNq', data)
+                if failed_parts_len > 0:
+                    data = f.read(struct.calcsize('N' * failed_parts_len))
+                    self.failed_parts = struct.unpack('N' * failed_parts_len, data)
+            self.exists = True
+        except:
+            self.exists = False
+
+    def modified(self, offset, written_bytes, failed_parts):
+        return self.offset != offset or self.written_bytes != written_bytes or set(self.failed_parts) ^ set(failed_parts)
+
+    def update(self, offset, written_bytes, failed_parts):
+        if not self.modified(offset, written_bytes, failed_parts):
+            return
+        self.offset = offset
+        self.written_bytes = written_bytes
+        self.failed_parts = failed_parts
+        failed_parts_len = len(self.failed_parts)
+        format = 'NNq' + 'N' * failed_parts_len
+        data = struct.pack(format, self.offset, self.written_bytes, failed_parts_len, *self.failed_parts)
+        with open(self.filename, 'wb') as f:
+            f.write(data)
+
+    def reset(self):
+        self.update(0, 0, [])
+
+    def delete(self):
+        try:
+            os.remove(self.filename)
+        except:
+            pass
+
+
 
 class CommandLine:
 
@@ -793,7 +823,7 @@ class CommandLine:
         self.console = Console()
 
     def show_help(self):
-        self.console.out(help_msg)
+        self.console.out(textwrap.dedent(help_msg.format(os.path.basename(__file__))))
         sys.exit()
 
     def parse_block_size(self, block_size):
