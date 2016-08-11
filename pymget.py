@@ -9,7 +9,7 @@ import time, struct, re
 import ftplib
 from abc import ABCMeta, abstractmethod, abstractproperty
 
-VERSION = '1.21'
+VERSION = '1.22'
 
 start_msg = '\nPyMGet v{}\n'
 
@@ -27,16 +27,18 @@ http_error = 'неверный ответ сервера. Код {}'
 filesize_error = 'размер файла на сервере {} {} байт отличается\nот полученного ранее {} байт.'
 download_impossible_error = 'невозможно скачать файл.'
 wrong_commandline_error = 'неверный аргумент командной строки. '
-arg_needs_param_error = "Аргумент '{}' требует указания параметра."
-wrong_param_format_error = "Неверный формат параметра '{}': {}"
-file_not_found_error = "Файл '{}' не найден."
-no_mirrors_error = 'Нет зеркал для скачивания.'
+arg_needs_param_error = "аргумент '{}' требует указания параметра."
+wrong_param_format_error = "неверный формат параметра '{}': {}"
+file_not_found_error = "файл '{}' не найден."
+file_is_corrupted_error = "невозможно прочесть список ссылок '{}'. Файл повреждён."
+file_permission_error = "невозможно прочесть список ссылок '{}'. Отказано в доступе."
+no_mirrors_error = 'нет зеркал для скачивания.'
 file_open_error = "не удалось открыть файл '{}': {}"
 file_create_error = "не удалось создать файл '{}': {}"
 file_write_error = "запись в файл '{}' завершилась неудачей."
 permission_denied_error = 'отказано в доступе.'
 
-empty_filename_warning = 'невозможно определить имя файла на зеркале {}. Возможно, это другой файл.'
+empty_filename_warning = 'невозможно определить имя файла на зеркале {}.'
 other_filename_warning = 'имя файла на зеркале {} отличается от {}. Возможно, это другой файл.'
 
 anyway_download_question = 'Всё равно использовать зеркало {}? (да/НЕТ):'
@@ -152,15 +154,6 @@ class Part(metaclass=ABCMeta):
         self.name = name
         self.status = status
 
-    def delete_mirror(self, manager):
-        mirror = manager.mirrors[self.name]
-        mirror.join()
-        del manager.mirrors[self.name]
-        if self.name in manager.gotten_sizes:
-            del manager.gotten_sizes[self.name]
-        if not manager.mirrors:
-            raise DownloadError(download_impossible_error)
-
     @abstractmethod
     def process(self, manager): pass
 
@@ -171,20 +164,7 @@ class HeadPart(Part):
         self.file_size = file_size
 
     def process(self, manager):
-        if manager.file_size == 0:
-            manager.file_size = self.file_size
-            self.console.progressbar.total = self.file_size
-            manager.outfile.seek(self.file_size - 1)
-            manager.outfile.write(b'\x00')
-            self.console.out(downloading_msg.format(manager.filename, self.file_size, calc_units(self.file_size)))
-        elif manager.file_size != self.file_size:
-            self.console.error(filesize_error.format(self.name, self.file_size, self.file_size))
-            self.delete_mirror(manager)
-            return
-        mirror = manager.mirrors[self.name]
-        mirror.file_size = self.file_size
-        mirror.ready = True
-        mirror.connect_message()
+        manager.set_file_size(self)
         
 
 class RedirectPart(Part):
@@ -194,26 +174,12 @@ class RedirectPart(Part):
         self.location = location
 
     def process(self, manager):
-        try:
-            self.delete_mirror(manager)
-        except:
-            pass
-        new_mirror = Mirror.create(URL(self.location), manager.block_size, manager.timeout)
-        manager.mirrors[new_mirror.name] = new_mirror
-        self.console.out(redirect_msg.format(self.name, self.location))
+        manager.redirect(self)
 
 class HeadErrorPart(Part):
 
     def process(self, manager):
-        if self.status == 0:
-            msg = connection_error.format(self.name)
-        elif self.status == 200:
-            msg = no_partial_error.format(self.name)
-        else:
-            msg = http_error.format(self.status)
-        self.console.error(msg)
-        self.delete_mirror(manager)
-        
+        manager.error(self)
 
 class ErrorPart(HeadErrorPart):
 
@@ -221,14 +187,8 @@ class ErrorPart(HeadErrorPart):
         Part.__init__(self, name, status)
         self.offset = offset
 
-    def del_active_part(self, manager):
-        manager.parts_in_progress.remove(self.offset)
-
-    def add_failed_part(self, manager):
-        manager.failed_parts.append(self.offset)
-
     def process(self, manager):
-        self.add_failed_part(manager)
+        manager.add_failed_part(self.offset)
         HeadErrorPart.process(self, manager)
 
 class DataPart(ErrorPart):
@@ -240,33 +200,30 @@ class DataPart(ErrorPart):
         self.gotten_size = gotten_size
 
     def process(self, manager):
-        manager.gotten_sizes[self.name] = self.gotten_size
-        manager.outfile.seek(self.offset + self.fragment_offset)
-        manager.outfile.write(self.data)
-        progress = manager.written_bytes + sum(manager.gotten_sizes.values())
-        self.console.progress(progress, progress - manager.old_progress)
+        manager.write_data(self)
 
 class FinalDataPart(DataPart):
 
     def process(self, manager):
-        self.del_active_part(manager)
-        DataPart.process(self, manager)
-        manager.written_bytes += self.gotten_size
-        manager.gotten_sizes[self.name] = 0
-        mirror = manager.mirrors[self.name]
-        mirror.done()
+        manager.task_done(self)
 
 
 
+
+class URLError(Exception): pass
 
 class URL:
 
     def __init__(self, url):
-        url_parts = url.split('/', 3)
-        self.protocol = url_parts[0].strip(':').lower()
-        self.host = url_parts[2]
-        self.request = '/' + url_parts[3]
-        self.filename = self.request.split('/')[-1]
+        url_re = re.compile('^(https?|ftp)://([\w\.-]+(?::\d+)?)((?:/(.+?))?/([^\/]+)?)?$', re.I)
+        matches = url_re.match(url)
+        if not matches:
+            raise URLError(url)
+        self.protocol = matches.group(1).lower()
+        self.host = matches.group(2)
+        self.request = matches.group(3)
+        self.path = matches.group(4)
+        self.filename = matches.group(5)
 
 
 
@@ -676,10 +633,16 @@ class Manager:
         self.filename = filename
         self.timeout = timeout
         self.mirrors = {}
+        self.gotten_sizes = {}
         for url in urls:
-            mirror = Mirror.create(URL(url), self.block_size, self.timeout)
-            if self.check_filename(mirror):
+            try:
+                mirror = Mirror.create(URL(url), self.block_size, self.timeout)
+                if not self.check_filename(mirror):
+                    raise URLError(mirror.filename)
                 self.mirrors[mirror.name] = mirror
+                self.gotten_sizes[mirror.name] = 0
+            except Exception as e:
+                self.console.error(str(e))
         if not self.mirrors:
             raise DownloadError(no_mirrors_error)
         if self.filename == '':
@@ -692,7 +655,6 @@ class Manager:
         self.failed_parts = deque(self.context.failed_parts)
         self.file_size = 0
         self.parts_in_progress = []
-        self.gotten_sizes = {}
 
     def check_filename(self, mirror):
         if self.filename == '':
@@ -744,8 +706,69 @@ class Manager:
                 mirror.join()
                 mirror.close()
             self.console.out()
-
         self.context.delete()
+
+    def del_active_part(self, offset):
+        self.parts_in_progress.remove(offset)
+
+    def add_failed_parts(self, offset):
+        self.del_active_part(offset)
+        self.failed_parts.append(offset)
+
+    def delete_mirror(self, name):
+        mirror = self.mirrors[name]
+        mirror.join()
+        del self.mirrors[name]
+        del self.gotten_sizes[name]
+        if not self.mirrors:
+            raise DownloadError(download_impossible_error)
+
+    def set_file_size(self, part):
+        if self.file_size == 0:
+            self.file_size = part.file_size
+            self.console.progressbar.total = self.file_size
+            self.outfile.seek(self.file_size - 1)
+            self.outfile.write(b'\x00')
+            self.console.out(downloading_msg.format(self.filename, self.file_size, calc_units(self.file_size)))
+        elif self.file_size != part.file_size:
+            self.console.error(filesize_error.format(part.name, part.file_size, part.file_size))
+            self.delete_mirror(part.name)
+            return
+        mirror = self.mirrors[part.name]
+        mirror.file_size = part.file_size
+        mirror.ready = True
+        mirror.connect_message()
+
+    def redirect(self, part):
+        self.delete_mirror(part.name)
+        mirror = Mirror.create(URL(part.location), self.block_size, self.timeout)
+        self.mirrors[mirror.name] = mirror
+        self.console.out(redirect_msg.format(part.name, part.location))
+
+    def error(self, part):
+        if part.status == 0:
+            msg = connection_error.format(part.name)
+        elif part.status == 200:
+            msg = no_partial_error.format(part.name)
+        else:
+            msg = http_error.format(part.status)
+        self.console.error(msg)
+        self.delete_mirror(part.name)
+
+    def write_data(self, part):
+        self.gotten_sizes[part.name] = part.gotten_size
+        self.outfile.seek(part.offset + part.fragment_offset)
+        self.outfile.write(part.data)
+        progress = self.written_bytes + sum(self.gotten_sizes.values())
+        self.console.progress(progress, progress - self.old_progress)
+
+    def task_done(self, part):
+        self.del_active_part(part.offset)
+        self.write_data(part)
+        self.written_bytes += part.gotten_size
+        self.gotten_sizes[part.name] = 0
+        mirror = self.mirrors[part.name]
+        mirror.done()
 
 
 
@@ -756,7 +779,7 @@ class CommandLine:
 
     def __init__(self, argv):
         self.argv = argv[1:]
-        self.block_size = 2**20
+        self.block_size = 4 * 2**20
         self.filename = ''
         self.timeout = 10
         self.urls = []
@@ -812,8 +835,12 @@ class CommandLine:
             with open(urls_file, 'r') as links:
                 for link in links:
                     self.urls.append(link.strip('\r\n'))
-        except:
+        except FileNotFoundError:
             raise CommandLineError(file_not_found_error.format(urls_file))
+        except PermissionError:
+            raise CommandLineError(file_permission_error.format(urls_file))
+        except UnicodeDecodeError:
+            raise CommandLineError(file_is_corrupted_error.format(urls_file))
 
     def parse_long_args(self):
         remain_args = []
@@ -827,7 +854,7 @@ class CommandLine:
             elif arg.startswith('--out-file'):
                 filename = self.get_long_param(arg)
                 self.parse_filename(filename)
-            elif arg.startswith('--file'):
+            elif arg.startswith('--links-file'):
                 urls_file = self.get_long_param(arg)
                 self.parse_urls(urls_file)
             else:
@@ -847,12 +874,14 @@ class CommandLine:
         if filename:
             self.parse_filename(filename)
 
-        urls_file = self.get_param('-f')
+        urls_file = self.get_param('-l')
         if urls_file:
             self.parse_urls(urls_file)
 
         self.parse_long_args()
         self.urls.extend(self.argv)
+        url_re = re.compile('^(?:https?|ftp)://(?:[\w\.-]+(?::\d+)?)/')
+        self.urls = filter(lambda url: url_re.match(url), self.urls)
 
 
 
@@ -867,12 +896,8 @@ if __name__ == '__main__':
         cl.parse()
         manager = Manager(cl.urls, cl.block_size, cl.filename, cl.timeout)
         manager.download()
-    except CommandLineError as e:
-        console.error(str(e))
-    except DownloadError as e:
-        console.error(str(e))
-    except FileError as e:
-        console.error(str(e))
     except CancelError as e:
         console.out(str(e))
+    except Exception as e:
+        console.error(str(e))
     
