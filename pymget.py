@@ -11,7 +11,7 @@ from abc import ABCMeta, abstractmethod, abstractproperty
 
 VERSION = '1.29'
 
-start_msg = '\nMultiGet v{}\n'
+start_msg = '\nPyMGet v{}\n'
 
 help_msg = """
     Программа предназначена для параллельного скачивания файлов с нескольких зеркал.
@@ -341,7 +341,7 @@ class NetworkThread(threading.Thread, metaclass=ABCMeta):
 
     """
     # строка user_agent для передачи HTTP(S) серверам
-    user_agent = 'MultiGet/{} ({} {}, {})'.format(VERSION, os.uname().sysname, os.uname().machine, os.uname().release)
+    user_agent = 'PyMGet/{} ({} {}, {})'.format(VERSION, os.uname().sysname, os.uname().machine, os.uname().release)
 
     def __init__(self):
         threading.Thread.__init__(self)
