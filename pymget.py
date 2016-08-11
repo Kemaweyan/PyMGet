@@ -9,7 +9,7 @@ import time, struct, re
 import ftplib
 from abc import ABCMeta, abstractmethod, abstractproperty
 
-VERSION = '1.20'
+VERSION = '1.21'
 
 start_msg = '\nPyMGet v{}\n'
 
@@ -76,23 +76,17 @@ class ProgressBar:
         self.time = time.time()
         self._total = total
 
-    def update(self, complete):
+    def update(self, complete, gotten_bytes):
         try:
-            speed = complete / (time.time() - self.time)
-        except:
-            speed = 0
-        if self.total != 0:
+            speed = gotten_bytes / (time.time() - self.time)
             percent = complete / self.total
             progress = round(self.WIDTH * percent)
-            speed_str = '{}/s'.format(calc_units(speed))
-        else:
+        except:
+            speed = 0
             percent = 0
             progress = 0
-            speed_str = ''
 
-        progress_str = '[{}]'.format(('#'*progress).ljust(self.WIDTH, '-'))
-        percent_str = '{:.2%}'.format(percent)
-        bar = '{0} {1} {2}\r'.format(progress_str, percent_str.rjust(7), speed_str.rjust(12))
+        bar = '[{0:-<{1}}] {2:>7.2%} {3:>10}/s\r'.format('#'*progress, self.WIDTH, percent, calc_units(speed))
 
         sys.stdout.write(bar)
         sys.stdout.flush()
@@ -129,11 +123,11 @@ class Console:
         if text:
             self.out(warning_msg + text, end)
 
-    def progress(self, complete):
+    def progress(self, complete, gotten_bytes):
         if self.newline:
             print()
         self.newline = False
-        self.progressbar.update(complete)
+        self.progressbar.update(complete, gotten_bytes)
 
     def ask(self, text, default):
         YES = ['y', 'yes', 'д', 'да']
@@ -191,6 +185,7 @@ class HeadPart(Part):
         mirror.file_size = self.file_size
         mirror.ready = True
         mirror.connect_message()
+        
 
 class RedirectPart(Part):
 
@@ -207,24 +202,9 @@ class RedirectPart(Part):
         manager.mirrors[new_mirror.name] = new_mirror
         self.console.out(redirect_msg.format(self.name, self.location))
 
-class ErrorPart(Part):
-
-    def __init__(self, name, status, offset):
-        Part.__init__(self, name, status)
-        self.offset = offset
-
-    def del_active_part(self, manager):
-        if self.offset < 0:
-            return False
-        manager.parts_in_progress.remove(self.offset)
-        return True
-
-    def add_failed_part(self, manager):
-        if self.del_active_part(manager):
-            manager.failed_parts.append(self.offset)
+class HeadErrorPart(Part):
 
     def process(self, manager):
-        self.add_failed_part(manager)
         if self.status == 0:
             msg = connection_error.format(self.name)
         elif self.status == 200:
@@ -233,6 +213,23 @@ class ErrorPart(Part):
             msg = http_error.format(self.status)
         self.console.error(msg)
         self.delete_mirror(manager)
+        
+
+class ErrorPart(HeadErrorPart):
+
+    def __init__(self, name, status, offset):
+        Part.__init__(self, name, status)
+        self.offset = offset
+
+    def del_active_part(self, manager):
+        manager.parts_in_progress.remove(self.offset)
+
+    def add_failed_part(self, manager):
+        manager.failed_parts.append(self.offset)
+
+    def process(self, manager):
+        self.add_failed_part(manager)
+        HeadErrorPart.process(self, manager)
 
 class DataPart(ErrorPart):
 
@@ -247,7 +244,7 @@ class DataPart(ErrorPart):
         manager.outfile.seek(self.offset + self.fragment_offset)
         manager.outfile.write(self.data)
         progress = manager.written_bytes + sum(manager.gotten_sizes.values())
-        self.console.progress(progress)
+        self.console.progress(progress, progress - manager.old_progress)
 
 class FinalDataPart(DataPart):
 
@@ -287,7 +284,7 @@ class ConnectionThread(threading.Thread, metaclass=ABCMeta):
         try:
             part = self.connect()
         except:
-            part = ErrorPart(self.url.host, 0, -1)
+            part = HeadErrorPart(self.url.host, 0)
         finally:
             Manager.data_queue.put(part)
             self.ready.set()
@@ -310,7 +307,7 @@ class HTTXThread(ConnectionThread, metaclass=ABCMeta):
                 location = '{}://{}{}'.format(self.url.protocol, self.url.host, path + location)
             return RedirectPart(self.url.host, response.status, location)
         if response.status != 200:
-            return ErrorPart(self.url.host, response.status, -1)
+            return HeadErrorPart(self.url.host, response.status)
         file_size = int(response.getheader('Content-Length'))
         part = HeadPart(self.url.host, response.status, file_size)
         response.close()
@@ -691,6 +688,7 @@ class Manager:
         self.outfile = OutputFile(self.filename)
         self.offset = self.context.offset
         self.written_bytes = self.context.written_bytes
+        self.old_progress = self.written_bytes
         self.failed_parts = deque(self.context.failed_parts)
         self.file_size = 0
         self.parts_in_progress = []
