@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 
 import sys, os
 import threading, queue
@@ -7,9 +8,9 @@ from http import client
 from collections import deque
 import time, struct, re
 import ftplib
-from abc import ABCMeta, abstractproperty
+from abc import ABCMeta, abstractmethod, abstractproperty
 
-VERSION = '1.17'
+VERSION = '1.19'
 
 start_msg = '\nPyMGet v{}\n'
 
@@ -170,14 +171,8 @@ class URL:
     def __init__(self, url):
         url_parts = url.split('/', 3)
         self.protocol = url_parts[0].strip(':').lower()
-        host = url_parts[2]
+        self.host = url_parts[2]
         self.request = '/' + url_parts[3]
-        if ':' in host:
-            self.host, port = host.split(':')
-            self.port = int(port)
-        else:
-            self.host = host
-            self.port = 0
         self.filename = self.request.split('/')[-1]
 
 
@@ -188,21 +183,33 @@ class ConnectionThread(threading.Thread, metaclass=ABCMeta):
     def __init__(self, url, timeout):
         threading.Thread.__init__(self)
         self.url = url
-        if self.url.port == 0:
-            self.url.port = self.PORT
         self.timeout = timeout
+        self.file_size = 0
         self.conn = None
+        self.error = False
         self.ready = threading.Event()
+
+    def run(self):
+        try:
+            self.connect()
+        except:
+            self.error = True
+        finally:
+            self.ready.set()
+
+    @abstractmethod
+    def connect(self): pass
 
 class HTTXThread(ConnectionThread, metaclass=ABCMeta):
 
-    def run(self):
-        self.conn = self.protocol(self.url.host, self.url.port, timeout=self.timeout)
-        self.ready.set()
+    def connect(self):
+        self.conn = self.protocol(self.url.host, timeout=self.timeout)
+        self.conn.request('HEAD', self.url.request)
+        response = self.conn.getresponse()
+        assert response.status == 200
+        self.file_size = int(response.getheader('Content-Length'))
 
 class HTTPThread(HTTXThread):
-
-    PORT = 80
 
     def __init__(self, url, timeout):
         ConnectionThread.__init__(self, url, timeout)
@@ -210,30 +217,21 @@ class HTTPThread(HTTXThread):
 
 class HTTPSThread(HTTXThread):
 
-    PORT = 443
-
     def __init__(self, url, timeout):
         ConnectionThread.__init__(self, url, timeout)
         self.protocol = client.HTTPSConnection
 
 class FTPThread(ConnectionThread):
 
-    PORT = 21
-
     def __init__(self, url, timeout):
         ConnectionThread.__init__(self, url, timeout)
         self.path = self.url.request.rsplit('/', 1)[0]
 
-    def run(self):
-        try:
-            self.conn = ftplib.FTP(self.url.host, 'anonymous', '', timeout=self.timeout)
-            self.conn.voidcmd('TYPE I')
-            self.conn.cwd(self.path)
-            self.conn.voidcmd('PASV')
-        except:
-            pass
-        finally:
-            self.ready.set()
+    def connect(self):
+        self.conn = ftplib.FTP(self.url.host, 'anonymous', '', timeout=self.timeout)
+        self.conn.voidcmd('TYPE I')
+        self.conn.cwd(self.path)
+        self.conn.voidcmd('PASV')
 
 
 
@@ -352,9 +350,9 @@ class Mirror(metaclass=ABCMeta):
         self.url = url
         self.block_size = block_size
         self.timeout = timeout
+        self.reported = False
         self.dnl_active = False
         self.conn = None
-        self.connected = False
         self.dnl_thread = None
         self.conn_thread = self.connection_thread(self.url, self.timeout)
         self.conn_thread.start()
@@ -364,9 +362,6 @@ class Mirror(metaclass=ABCMeta):
             return False
         self.conn_thread.join()
         self.conn = self.conn_thread.conn
-        if not self.connected:
-            self.console.out(connected_msg.format(self.url.host))
-            self.connected = True
         if self.dnl_active:
             if not self.dnl_thread.ready.wait(0.001):
                 return False
@@ -397,6 +392,15 @@ class Mirror(metaclass=ABCMeta):
     @property
     def filename(self):
         return self.url.filename
+
+    @property
+    def error(self):
+        if self.conn_thread.error:
+            self.console.error(connection_error.format(self.name))
+        elif not self.reported:
+            self.reported = True
+            self.console.out(connected_msg.format(self.name))
+        return self.conn_thread.error
 
     @abstractproperty
     def connection_thread(self): pass
@@ -593,10 +597,13 @@ class Manager:
         return self.console.ask(anyway_download_question.format(mirror.name), False)
 
     def wait_connections(self):
-        active = 0
-        for mirror in self.mirrors.values():
+        alive_mirrors = {}
+        for name, mirror in self.mirrors.items():
             if mirror.wait_connection():
+                if mirror.error: continue
                 self.give_task(mirror)
+            alive_mirrors[name] = mirror
+        self.mirrors = alive_mirrors
 
     def give_task(self, mirror):
         if len(self.failed_parts) > 0:
@@ -612,16 +619,18 @@ class Manager:
         gotten_sizes = {}
         with self.outfile:
             while self.file_size == 0 or self.written_bytes < self.file_size:
-                self.wait_connections()
-                while True:
-                    try:
-                        part = self.data_queue.get(False, 0.01)
+                try:
+                    self.wait_connections()
 
+                    while True:
+                        try:
+                            part = self.data_queue.get(False, 0.01)
+                        except queue.Empty:
+                            break
+                        mirror = self.mirrors[part.name]
+                        gotten_sizes[part.name] = part.gotten_size
                         try:
                             try:
-                                assert part.name in self.mirrors
-                                mirror = self.mirrors[part.name]
-
                                 if part.complete:
                                     self.parts_in_progress.remove(part.offset)
 
@@ -643,7 +652,6 @@ class Manager:
 
                                 self.outfile.seek(part.offset + part.fragment_offset)
                                 self.outfile.write(part.data)
-                                gotten_sizes[part.name] = part.gotten_size
 
                                 progress = self.written_bytes + sum(gotten_sizes.values())
                                 self.console.progress(progress)
@@ -661,21 +669,19 @@ class Manager:
                                 self.mirrors[new_mirror.name] = new_mirror
                                 raise
                         except:
-                            self.failed_parts.append(part.offset)
-                            if part.name in self.mirrors:
-                                mirror.join()
-                                mirror.close()
-                                del self.mirrors[part.name]
-                            if part.name in gotten_sizes:
-                                gotten_sizes[part.name]
-                            if not self.mirrors:
-                                raise DownloadError(download_impossible_error)
-                        finally:
-                            needle_parts = self.parts_in_progress.copy()
-                            needle_parts.extend(self.failed_parts)
-                            self.context.update(self.offset, self.written_bytes, needle_parts)
-                    except queue.Empty:
-                        break
+                            mirror.join()
+                            mirror.close()
+                            del self.mirrors[part.name]
+                            del gotten_sizes[part.name]
+                            raise
+                except:
+                    self.failed_parts.append(part.offset)
+                    if not self.mirrors:
+                        raise DownloadError(download_impossible_error)
+                finally:
+                    needle_parts = self.parts_in_progress.copy()
+                    needle_parts.extend(self.failed_parts)
+                    self.context.update(self.offset, self.written_bytes, needle_parts)
 
             for mirror in self.mirrors.values():
                 mirror.join()
