@@ -9,7 +9,7 @@ import time, struct, re
 import ftplib
 from abc import ABCMeta, abstractmethod, abstractproperty
 
-VERSION = '1.22'
+VERSION = '1.23'
 
 start_msg = '\nPyMGet v{}\n'
 
@@ -215,6 +215,7 @@ class URLError(Exception): pass
 class URL:
 
     def __init__(self, url):
+        self.url = url
         url_re = re.compile('^(https?|ftp)://([\w\.-]+(?::\d+)?)((?:/(.+?))?/([^\/]+)?)?$', re.I)
         matches = url_re.match(url)
         if not matches:
@@ -262,7 +263,7 @@ class HTTXThread(ConnectionThread, metaclass=ABCMeta):
                 if not location.startswith('/'):
                     path = '/' + self.url.request.rsplit('/', 1)[0]
                 location = '{}://{}{}'.format(self.url.protocol, self.url.host, path + location)
-            return RedirectPart(self.url.host, response.status, location)
+            return RedirectPart(self.url.host, response.status, URL(location))
         if response.status != 200:
             return HeadErrorPart(self.url.host, response.status)
         file_size = int(response.getheader('Content-Length'))
@@ -636,11 +637,11 @@ class Manager:
         self.gotten_sizes = {}
         for url in urls:
             try:
-                mirror = Mirror.create(URL(url), self.block_size, self.timeout)
+                mirror = Mirror.create(url, self.block_size, self.timeout)
                 if not self.check_filename(mirror):
                     raise URLError(mirror.filename)
-                self.mirrors[mirror.name] = mirror
-                self.gotten_sizes[mirror.name] = 0
+                self.mirrors[url.host] = mirror
+                self.gotten_sizes[url.host] = 0
             except Exception as e:
                 self.console.error(str(e))
         if not self.mirrors:
@@ -720,8 +721,6 @@ class Manager:
         mirror.join()
         del self.mirrors[name]
         del self.gotten_sizes[name]
-        if not self.mirrors:
-            raise DownloadError(download_impossible_error)
 
     def set_file_size(self, part):
         if self.file_size == 0:
@@ -741,9 +740,9 @@ class Manager:
 
     def redirect(self, part):
         self.delete_mirror(part.name)
-        mirror = Mirror.create(URL(part.location), self.block_size, self.timeout)
+        mirror = Mirror.create(part.location, self.block_size, self.timeout)
         self.mirrors[mirror.name] = mirror
-        self.console.out(redirect_msg.format(part.name, part.location))
+        self.console.out(redirect_msg.format(part.name, part.location.url))
 
     def error(self, part):
         if part.status == 0:
@@ -754,6 +753,8 @@ class Manager:
             msg = http_error.format(part.status)
         self.console.error(msg)
         self.delete_mirror(part.name)
+        if not self.mirrors:
+            raise DownloadError(download_impossible_error)
 
     def write_data(self, part):
         self.gotten_sizes[part.name] = part.gotten_size
@@ -881,7 +882,7 @@ class CommandLine:
         self.parse_long_args()
         self.urls.extend(self.argv)
         url_re = re.compile('^(?:https?|ftp)://(?:[\w\.-]+(?::\d+)?)/')
-        self.urls = filter(lambda url: url_re.match(url), self.urls)
+        self.urls = map(lambda url: URL(url), filter(lambda url: url_re.match(url), self.urls))
 
 
 
