@@ -9,7 +9,7 @@ from http import client
 import ftplib
 from abc import ABCMeta, abstractmethod, abstractproperty
 
-VERSION = '1.29'
+VERSION = '1.30'
 
 start_msg = '\nPyMGet v{}\n'
 
@@ -1465,7 +1465,7 @@ class Context:
         :filename: имя скачиваемого файла, тип str
 
         """
-        self.filename = filename + '.mget' # имя файла контекста
+        self.filename = filename + '.pymget' # имя файла контекста
         self.failed_parts = [] # части, которые всё ещё над оскачать
         self.offset = 0 # текущее смещение
         self.written_bytes = 0 # количество записанных байт
