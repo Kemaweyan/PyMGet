@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import sys, os
+import sys, os, platform
 import threading, queue
 from collections import deque
 import time, struct, re, textwrap
@@ -9,7 +9,7 @@ from http import client
 import ftplib
 from abc import ABCMeta, abstractmethod, abstractproperty
 
-VERSION = '1.31'
+VERSION = '1.32'
 
 start_msg = '\nPyMGet v{}\n'
 
@@ -160,6 +160,8 @@ class ProgressBar:
     def __init__(self):
         self._total = 0
         self.time = 0
+        if platform.system() == 'Windows':
+            self.WIDTH -= 1 # в Windows надо уменьшить на 1, иначе перебрасывает на новую строку
 
     @property
     def total(self):
@@ -344,7 +346,7 @@ class NetworkThread(threading.Thread, metaclass=ABCMeta):
 
     """
     # строка user_agent для передачи HTTP(S) серверам
-    user_agent = 'PyMGet/{} ({} {}, {})'.format(VERSION, os.uname().sysname, os.uname().machine, os.uname().release)
+    user_agent = 'PyMGet/{} ({} {}, {})'.format(VERSION, platform.uname().system, platform.uname().machine, platform.uname().release)
 
     def __init__(self):
         threading.Thread.__init__(self)
