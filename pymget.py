@@ -669,6 +669,7 @@ class Mirror(metaclass=ABCMeta):
         self.block_size = block_size
         self.timeout = timeout
         self.file_size = 0 # размер файла определяется после подключения
+        self.task_progress = 0 # скачано в текущем задании
         self.conn = None # объект соединения
         self.need_connect = True # флаг необходимости подключиться
         self.ready = False # флаг готовности качать очередную часть
@@ -729,6 +730,7 @@ class Mirror(metaclass=ABCMeta):
         Помечает зеркало как завершившее скачивание
 
         """
+        self.task_progress = 0 # задание завершено, очищаем кол-во скачаного
         self.ready = True # зеркало готово качать очередную часть
 
     def connect_message(self):
@@ -1130,16 +1132,16 @@ class ProgressPart(Part):
     Часть, сообщающая основному потоку прогресс скачивания.
     
     """
-    def __init__(self, name, status, gotten_size):
+    def __init__(self, name, status, task_progress):
 
         """
         :name: имя зеркала, которое отправило часть, тип str
         :status: статус выполнения операции потоком, тип int
-        ：gotten_size： количество данных, полученных за данный сеанс, тип int
+        ：task_progress： количество данных, полученных за данный сеанс, тип int
 
         """
         Part.__init__(self, name, status)
-        self.gotten_size = gotten_size
+        self.task_progress = task_progress
 
     def process(self, manager):
 
@@ -1241,7 +1243,6 @@ class Manager:
         self.timeout = timeout
         self.server_filename = '' # имя файла на серверах, пока неизвестно
         self.mirrors = {} # зеркала
-        self.gotten_sizes = {} # кол-во полученных байт в активных заданиях, необходимо для вычисления прогресса
         for url in urls:
             self.create_mirror(url) # пробуем создать зеркало
         if not self.mirrors: # если нет зеркал
@@ -1275,7 +1276,6 @@ class Manager:
             self.console.error(str(e)) # выводим сообщение об ошибке
         else:
             self.mirrors[url.host] = mirror # добавляем зеркало в список
-            self.gotten_sizes[url.host] = 0 # создаём элемент в списке прогресса активных заданий
 
     def check_filename(self, mirror):
 
@@ -1389,9 +1389,6 @@ class Manager:
         mirror = self.mirrors[name]
         mirror.join()
         del self.mirrors[name]
-        # вместе с зеркалом обязательно создаётся соответствующий элемент в gotten_sizes
-        # его тоже необходимо удалить
-        del self.gotten_sizes[name]
 
     def set_file_size(self, part):
 
@@ -1457,11 +1454,12 @@ class Manager:
         :part: часть, взятая из очереди, тип ProgressPart
 
         """
-        # обновляем проресс соответствующего задания
-        self.gotten_sizes[part.name] = part.gotten_size
+        # обновляем проресс соответствующего зеркала
+        mirror = self.mirrors[part.name]
+        mirror.task_progress = part.task_progress
         # прогресс равен ранее записанным данным + сумме скачаного
         # активными заданиями
-        progress = self.written_bytes + sum(self.gotten_sizes.values())
+        progress = self.written_bytes + sum(map(lambda m: m.task_progress, self.mirrors.values()))
         # обновляем прогресс в консоли, для вычисления скорости передаём
         # только скачанное за текущий сеанс
         self.console.progress(progress, progress - self.old_progress)
@@ -1478,7 +1476,6 @@ class Manager:
         self.outfile.seek(part.offset) # перемещаемся к началу части
         self.outfile.write(part.data) # пишем данные
         self.written_bytes += len(part.data) # увеличиваем число записанных байт
-        self.gotten_sizes[part.name] = 0 # обнуляем кол-во полученных байт активным зеркалом
         mirror = self.mirrors[part.name]
         mirror.done() # помечаем зеркало завершившим скачивание
 
