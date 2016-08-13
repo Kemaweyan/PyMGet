@@ -9,7 +9,7 @@ from http import client
 import ftplib
 from abc import ABCMeta, abstractmethod, abstractproperty
 
-VERSION = '1.30'
+VERSION = '1.31'
 
 start_msg = '\nPyMGet v{}\n'
 
@@ -75,8 +75,10 @@ file_permission_error = "невозможно прочесть список сс
 no_mirrors_error = 'нет зеркал для скачивания.'
 file_open_error = "не удалось открыть файл '{}': {}"
 file_create_error = "не удалось создать файл '{}': {}"
+dir_create_error = "не удалось создать папку '{}': {}"
 file_write_error = "запись в файл '{}' завершилась неудачей."
 permission_denied_error = 'отказано в доступе.'
+dir_is_file_error = "неверный путь, '{}' является файлом."
 
 empty_filename_warning = 'невозможно определить имя файла на зеркале {}.'
 other_filename_warning = 'имя файла на зеркале {} отличается от {}. Возможно, это другой файл.'
@@ -85,6 +87,7 @@ unknown_arg_warning = "неизвестный аргумент: '{}'"
 anyway_download_question = 'Всё равно использовать зеркало {}? (да/НЕТ):'
 rewrite_file_question = 'Файл {} существует. Вы действительно хотите перезаписать файл? (да/НЕТ):'
 file_create_question = 'Файл {} не найден. Начать скачивание заново? (ДА/нет):'
+dir_create_question = 'Папки {} не существует. Создать папку? (ДА/нет):'
 
 
 # Классы исключений
@@ -907,16 +910,58 @@ class OutputFile:
     write: пишет в файл
 
     """
-    def __init__(self, filename):
+    def __init__(self, filename, path):
 
         """
-        :filename: имя файла, тип str
+        :filename: имя файла на сервере, тип str
+        :path: путь для сохранения файла, тип str
 
         """
-        self.filename = filename
         self.console = Console()
-        self.context = Context(self.filename)
+        if not path: # пользователь не указал путь
+            self.filename = filename # имя файла берём с сервера
+            self.path = '' # путь пуст
+            self.fullpath = filename # полный путь - просто имя файла
+        elif os.path.isdir(path): # если пользователь указал путь к папке
+            self.filename = filename # имя файла берём с сервера
+            self.path = path # используем указанный пользователем путь
+            self.fullpath = os.path.normpath(path + os.sep + filename) # полный путь для сохранения
+        else: # если указанный пользователем путь - не папка
+            self.filename = os.path.basename(path) # извлекаем из пути имя файла
+            self.path = os.path.dirname(path) # и путь к файлу 
+            self.fullpath = path # полный путь указан пользователем
+            self.check_folders() # проверяем существование папок
+        self.context = Context(self.fullpath)
         self.file = self.open_file(self.context.exists)
+
+    def check_folders(self):
+        
+        """
+        Проверяет существование каталогов в указанном пути.
+        Если папка не существует - запрашивает создание.
+
+        """
+        if os.path.isdir(self.path): # папка существует
+            return # ничего не делаем
+        folders = self.path.split(os.sep) # разбиваем путь на составляющие
+        for i in range(len(folders)):
+            # для каждой подпапки в пути
+            path = os.sep.join(folders[:i + 1])
+            if not path: # если путь пустой
+                # значит split "съел" первый /
+                path = os.sep # и первая папка - корень
+            if os.path.isdir(path): # если папка существует
+                continue # поропускаем
+            if os.path.isfile(path): # если это файл
+                raise FileError(dir_is_file_error.format(path)) # ошибка пути
+            if not self.console.ask(dir_create_question.format(path), True): # запрашиваем создание
+                # и если пользователь ответил "нет" 
+                raise CancelError(cancel_msg) # отмена скачивания
+            try:
+                os.mkdir(path) # создаём папку
+            except:
+                # не удалось создать папку
+                raise FileError(dir_create_error.format(path, permission_denied_error))
 
     def open_file(self, context_exists):
 
@@ -930,39 +975,41 @@ class OutputFile:
         """
         if context_exists: # если контекст существует
             try:
-                return open(self.filename, 'rb+') # открываем файл для обновления
+                return open(self.fullpath, 'rb+') # открываем файл для обновления
             except:
                 # в случае ошибки
-                if os.path.isfile(self.filename): # если файл существует
-                    raise FileError(file_open_error.format(self.filename, permission_denied_error)) # ошибка доступа
+                if os.path.isfile(self.fullpath): # если файл существует
+                    raise FileError(file_open_error.format(self.fullpath, permission_denied_error)) # ошибка доступа
                 # если не существует
-                if not self.console.ask(file_create_question.format(self.filename), True): # запрашиваем создание
+                if not self.console.ask(file_create_question.format(self.fullpath), True): # запрашиваем создание
                     # и если пользователь ответил "нет" 
                     raise CancelError(cancel_msg) # отмена скачивания
                 self.context.reset() # сбрасываем контекст
                 return self.open_file(False) # и вызываем этот-же метод без контекста
         else: # если контекста нет         
-            if os.path.isfile(self.filename): # если фаайл существует
-                if not self.console.ask(rewrite_file_question.format(self.filename), False): # запрашиваем пересоздание
+            if os.path.isfile(self.fullpath): # если файл существует
+                if not self.console.ask(rewrite_file_question.format(self.fullpath), False): # запрашиваем пересоздание
                     # если пользователь ответил "нет"
                     raise CancelError(cancel_msg) # отмена скачивания
             try:
-                return open(self.filename, 'wb') # открываем файл для записи (существующий файл будет перезаписан с нуля)
+                return open(self.fullpath, 'wb') # открываем файл для записи (существующий файл будет перезаписан с нуля)
             except:
                 # в случае ошибки - невозможно здать файл
-                raise FileError(file_create_error.format(self.filename, permission_denied_error))
+                raise FileError(file_create_error.format(self.fullpath, permission_denied_error))
 
     def __enter__(self):
+
         """
-        Медод, вызываем менеджером контекста при входе.
+        Медод, вызываемый менеджером контекста при входе.
         Возвращает ссылку на себя, внутри оператора with будут доступны методы seek и write
 
         """
         return self 
 
     def __exit__(self, exception_type, exception_value, traceback):
+
         """
-        Медод, вызываем менеджером контекста при выходе.
+        Медод, вызываемый менеджером контекста при выходе.
         Закрывает файл, если он был открыт
 
         """
@@ -972,6 +1019,7 @@ class OutputFile:
             return False # сообщаем, что исключение обработано
 
     def seek(self, offset):
+
         """
         Медод перемещения указателя в файле. 
 
@@ -985,6 +1033,7 @@ class OutputFile:
             raise FileError(file_write_error.format(self.filename))
 
     def write(self, data):
+
         """
         Медод данных записи в файл. 
 
@@ -1189,19 +1238,18 @@ class Manager:
         """
         self.console = Console()
         self.block_size = block_size
-        self.filename = filename
-        self.given_filename = filename
         self.timeout = timeout
+        self.server_filename = '' # имя файла на серверах, пока неизвестно
         self.mirrors = {} # зеркала
         self.gotten_sizes = {} # кол-во полученных байт в активных заданиях, необходимо для вычисления прогресса
         for url in urls:
             self.create_mirror(url) # пробуем создать зеркало
         if not self.mirrors: # если нет зеркал
             raise FatalError(no_mirrors_error) # критическая ошибка
-        if self.filename == '': # если имя файла не определилось
-            self.filename = 'out' # присваиваем имя out
-        self.context = Context(self.filename) # создаём объект контекста
-        self.outfile = OutputFile(self.filename) # создаём объект выходного файла
+        if self.server_filename == '': # если имя файла не определилось
+            self.server_filename = 'out' # присваиваем имя out
+        self.outfile = OutputFile(self.server_filename, filename) # создаём объект выходного файла
+        self.context = self.outfile.context # сохраняем объект контекста, связанный с файлом
         self.offset = self.context.offset # текущее смещение равно смещению из контекста, продолжаем качать дальше
         self.written_bytes = self.context.written_bytes # кол-во записанных байт равно кол-ву записанных байт из контекста
         self.old_progress = self.written_bytes # сохраняем прогресс предыдущих сессий (необходимо для корректного вычисления скорости)
@@ -1237,18 +1285,16 @@ class Manager:
         :mirror: объект зеркала, тип Mirror
 
         """
-        if self.given_filename: # если имя фйайла указано вручную
-            return True # пропускаем проверку
-        if self.filename == '': # если имя файла ещё не определено
-            if mirror.filename == '': # если если зеркало не смонго определить имя файла
+        if self.server_filename == '': # если имя файла ещё не определено
+            if mirror.filename == '': # если если зеркало не смогло определить имя файла
                 self.console.warning(empty_filename_warning.format(mirror.name)) # выводим предупреждение что имя пустое
                 return self.console.ask(anyway_download_question.format(mirror.name), False) # запрашиваем подтверждение на использование зеркала
-            self.filename = mirror.filename # сохраняем имя файла
+            self.server_filename = mirror.filename # сохраняем имя файла
             return True # проверка пройдена
-        if os.path.basename(self.filename) == mirror.filename: # если имя совпадает
+        if os.path.basename(self.server_filename) == mirror.filename: # если имя совпадает
             return True # проверка пройдена
         # иначе имя отдличается
-        self.console.warning(other_filename_warning.format(mirror.name, self.filename)) # выводим предупреждение
+        self.console.warning(other_filename_warning.format(mirror.name, self.server_filename)) # выводим предупреждение
         return self.console.ask(anyway_download_question.format(mirror.name), False) # запрашиваем подтверждение на использование зеркала
 
     def wait_connections(self):
@@ -1362,7 +1408,7 @@ class Manager:
             self.console.progressbar.total = self.file_size
             self.outfile.seek(self.file_size - 1) # перемещаемся к последнему байту
             self.outfile.write(b'\x00') # пишем ноль
-            self.console.out(downloading_msg.format(self.filename, self.file_size, calc_units(self.file_size)))
+            self.console.out(downloading_msg.format(self.outfile.filename, self.file_size, calc_units(self.file_size)))
         elif self.file_size != part.file_size: # запуск не первый и размер файла отличается
             raise FileSizeError # значит файл "битый" или вообще другой
         mirror = self.mirrors[part.name]
