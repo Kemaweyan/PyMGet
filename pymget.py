@@ -9,7 +9,7 @@ from http import client
 import ftplib
 from abc import ABCMeta, abstractmethod, abstractproperty
 
-VERSION = '1.32'
+VERSION = '1.33'
 
 start_msg = '\nPyMGet v{}\n'
 
@@ -855,7 +855,8 @@ class FTPMirror(Mirror):
         Помечает зеркало как завершившее скачивание
 
         """
-        self.ready = False # в отличие от HTTX FTP сразу е готово качать следующую часть
+        Mirror.done(self)
+        self.ready = False # в отличие от HTTX FTP сразу не готово качать следующую часть
         self.need_connect = True # а нуждается в переподключении
 
     @property
