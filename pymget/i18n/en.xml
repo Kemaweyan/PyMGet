@@ -35,7 +35,7 @@
 
              -o filename                    Specify a name of the file data will be saved
              --out-file=filename            to. By default the filename on the server is
-                                            used. If it's impossible to detect the filename, 
+                                            used. If it's impossible to detect the filename,
                                             'out' will be used.
 
              -u filename                    Specify the file with links on each line.
