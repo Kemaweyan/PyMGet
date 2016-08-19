@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<language name="en_US" version="1.0">
+<language name="ru_RU" version="1.0">
     <common>
         <msg name="error">Ошибка: </msg>
         <msg name="warning">Внимание: </msg>
