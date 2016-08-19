@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 
 import queue
-from utils import singleton
+
+from pymget.utils import singleton
 
 @singleton
 class DataQueue(queue.Queue):

@@ -7,8 +7,8 @@ from http import client
 import ftplib
 from abc import ABCMeta, abstractmethod, abstractproperty
 
-from task_info import *
-from data_queue import DataQueue
+from pymget.task_info import *
+from pymget.data_queue import DataQueue
 
 VERSION = '1.34'
 

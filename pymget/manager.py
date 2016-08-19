@@ -5,13 +5,13 @@
 import os, queue
 from collections import deque
 
-from messages import Messages
-from errors import FatalError, URLError, FileSizeError
-from console import Console
-from outfile import OutputFile
-from utils import calc_units
-from mirrors import Mirror
-from data_queue import DataQueue
+from pymget.messages import Messages
+from pymget.errors import FatalError, URLError, FileSizeError
+from pymget.console import Console
+from pymget.outfile import OutputFile
+from pymget.utils import calc_units
+from pymget.mirrors import Mirror
+from pymget.data_queue import DataQueue
 
 # Класс менеджера скачивания
 

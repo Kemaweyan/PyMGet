@@ -3,9 +3,9 @@
 
 from abc import ABCMeta, abstractproperty
 
-from console import *
-from messages import Messages
-from networking import *
+from pymget.console import *
+from pymget.messages import Messages
+from pymget.networking import *
 
 # Классы зеркал
 

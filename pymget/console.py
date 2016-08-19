@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 
 import sys, platform, time
-from messages import Messages
-from utils import *
+
+from pymget.messages import Messages
+from pymget.utils import *
 
 # Классы для ввода информации в консоль
 

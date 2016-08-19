@@ -1,0 +1,61 @@
+==================================================
+ PyMGet :: Utility for parallel downloading
+        files from multiple mirrors 
+==================================================
+
+Homepage: http://pymget.sourceforge.net/
+
+Author: Taras Gaidukov
+
+================================
+ Installation Instructions:
+================================
+
+Dependencies:
+
+    Python 3.x
+
+Build and install by running:
+
+    $ python setup.py build
+    $ sudo python setup.py install
+
+================
+ Usage notes:
+================
+
+The program is designed for parallel download files from multiple mirrors.
+Supported protocols: HTTP, HTTPS, FTP. 
+
+Usage:
+
+ pymget [ARGUMENTS...] LINKS...
+
+Arguments:
+
+ -h                             Show this help.
+ --help
+
+ -v                             Show version.
+ --version
+
+ -b block_size                  Specify the size of data block received from 
+                                mirrors in each task. Default value is 4MB. 
+ --block-size=block_size        Value could be in bytes, kilobytes or megabytes.
+                                To specify units add symbol K or M.
+
+ -T timeout                     Specify timeout for mirror response in seconds.
+ --timeout=timeout              Default value is 10 seconds.
+
+ -o filename                    Specify a name of the file data will be saved
+ --out-file=filename            to. By default the filename on the server is
+                                used. If it's impossible to detect the filename, 
+                                'out' will be used.
+
+ -u filename                    Specify the file with links on each line.
+ --urls-file=filename           Links from this file will be added to links from
+                                command line.
+
+Links should start with protocol http://, https:// or ftp:// and should be
+splitted with space. If there is argument specifing a file with links in command
+line, then you may omit links in the command line.

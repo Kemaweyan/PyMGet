@@ -4,10 +4,10 @@
 import sys, os
 import re, textwrap
 
-from networking import URL
-from console import Console
-from messages import Messages
-from errors import CommandLineError
+from pymget.networking import URL
+from pymget.console import Console
+from pymget.messages import Messages
+from pymget.errors import CommandLineError
 
 # Класс парсера командной строки
 

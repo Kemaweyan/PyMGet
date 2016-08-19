@@ -4,9 +4,9 @@
 import os
 import struct
 
-from console import *
-from messages import Messages
-from errors import FileError, CancelError
+from pymget.console import *
+from pymget.messages import Messages
+from pymget.errors import FileError, CancelError
 
 # Класс выходного файла
 

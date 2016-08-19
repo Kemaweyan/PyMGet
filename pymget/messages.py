@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import locale
+import os, locale
 import xml.etree.ElementTree as ET
-from utils import singleton
-from errors import FatalError
+
+from pymget.utils import singleton
+from pymget.errors import FatalError
 
 class LangParser:
 
     def __init__(self, lang):
-        tree = ET.parse('i18n/{}.xml'.format(lang))
+        path = os.path.dirname(os.path.realpath(__file__))
+        fullpath = os.sep.join([path, 'i18n/{}.xml'.format(lang)])
+        tree = ET.parse(fullpath)
         self.root = tree.getroot()
 
     def get_messages(self, section_name):

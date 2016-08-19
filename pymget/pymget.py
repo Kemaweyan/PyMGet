@@ -3,16 +3,16 @@
 
 import sys
 
-from messages import Messages
-from errors import CancelError
-from console import Console
-from manager import Manager
-from networking import VERSION
-from command_line import CommandLine
+from pymget.messages import Messages
+from pymget.errors import CancelError
+from pymget.console import Console
+from pymget.manager import Manager
+from pymget.networking import VERSION
+from pymget.command_line import CommandLine
 
 # выполняется при запуске сценария как самостоятельной программы
 
-if __name__ == '__main__':
+def start():
 
     try:
         Messages()

@@ -3,8 +3,8 @@
 
 from abc import ABCMeta, abstractmethod
 
-from console import Console
-from errors import FileSizeError
+from pymget.console import Console
+from pymget.errors import FileSizeError
 
 # Классы частей (объектов, помещаемых потоками в очередь)
 
