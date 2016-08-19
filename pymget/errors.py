@@ -1,0 +1,12 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+# Классы исключений
+
+class FatalError(Exception): pass
+class FileError(Exception): pass
+class CancelError(Exception): pass
+class CommandLineError(Exception): pass
+class URLError(Exception): pass
+class MirrorError(Exception): pass
+class FileSizeError(Exception): pass
