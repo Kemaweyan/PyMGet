@@ -15,6 +15,10 @@ class CommandLine:
     Reads arguments in the command line and
     executes required actions.
 
+    Use 'parse' method to parse command line
+    arguments and then get values from attributes
+    'block_size', 'timeout', 'filename' and 'urls'
+
     """
     def __init__(self, argv):
 
