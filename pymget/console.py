@@ -6,23 +6,21 @@ import sys, platform, time
 from pymget.messages import Messages
 from pymget.utils import *
 
-# Классы для ввода информации в консоль
-
 class ProgressBar:
 
     """
-    Класс индикатора прогресса. 
-    Перед использованием необходимо задать общий размер изменением свойства total.
-    Для изменения прогресса используется метод update
+    Progress indicator. 
+    Please assign 'total' property before using.
+    To change a progress use 'update' method
 
     """
-    WIDTH = 57 # ширина прогрессбара, вычисляется как 80 - [ширина всего остального]
+    WIDTH = 57 # the width of progressbar, the number is 80 - [everything else]
 
     def __init__(self):
         self._total = 0
         self.time = 0
         if platform.system() == 'Windows':
-            self.WIDTH -= 1 # в Windows надо уменьшить на 1, иначе перебрасывает на новую строку
+            self.WIDTH -= 1 # in Windows it should be 79 - [everything else]
 
     @property
     def total(self):
@@ -30,20 +28,20 @@ class ProgressBar:
 
     @total.setter
     def total(self, total):
-        self.time = time.time()
+        self.time = time.time() # save a time when downloading has been started
         self._total = total
 
     def update(self, complete, gotten_bytes):
 
         """
-        Устанавливает текущий прогресс. Поскольку программа может качать файл за несколько сеансов (в результате сбоя),
-        для правильного вычисления скорости необходимо отдельно указывать общий прогресс и прогресс за текущий сеанс.
+        Sets the current progress. The program could download file in multiple sessions (retry after fail), so to calculate
+        the correct speed value there are separate arguments for total progress and the progress in current session.
 
-        :complete: общее количество полученных байт за все сеансы, прогресс равен complete / total * 100%, тип int
-        :gotten_bytes: количество байт, полученное с момента запуска программы, тип int
+        :complete: number of bytes downloaded in all sessions, progress calculates as complete / total * 100%, type int
+        :gotten_bytes: number of bytes downloaded in current session, type int
 
         """
-        # возможно деление на 0
+        # to prevent errors because of zero divizion
         try:
             speed = gotten_bytes / (time.time() - self.time)
             percent = complete / self.total
@@ -53,9 +51,9 @@ class ProgressBar:
             percent = 0
             progress = 0
 
-        # формат прогрессбара:
-        # [строка прогресса] |прогресс в процентах| |скорость скачивания|
-        #   WIDTH символов        7 символов            12 символов
+        # progressbar format:
+        # [progress string] |progress in percents| |download speed|
+        #   WIDTH symbols        7 symbols            12 symbols
 
         bar = '[{0:-<{1}}] {2:>7.2%} {3:>10}/s\r'.format('#'*progress, self.WIDTH, percent, calc_units(speed))
 
@@ -69,47 +67,49 @@ class ProgressBar:
 class Console:
 
     """
-    Класс консоли. Используется вместо print, поскольку дополнительно учитывает 
-    наличие/отсутствие перевода строки в конце предыдущего вывода. Если последний 
-    вывод был сделан прогрессбаром, то перевода строки в конце нет и функция print
-    вывела бы текст поверх прогрессбара. Во избежание этого класс добавляет перевод
-    строки перед выводом следующего сообщения.
+    Used instead of 'print', because it considers presence/absence of newline symbol
+    in previous console out. If previous console out was made by progressbar, there
+    is no newline symbol in the end of string and 'print' function would print the text
+    over progressbar symbols. To prevent this issue console class adds the newline symbol
+    before print a new message.
 
-    Методы:
+    Methods:
 
-    out: простой вывод сообщений без префикса.
-    warning: выводит сообщение с префиксом 'Внимание: '
-    error: выводит сообщение с префиксом 'Ошибка: '
-    ask: выводит сообщение с вопросом да/нет
-    progress: выводит/обновляет прогрессбар
+    out: prints a text from newline without prefix
+    warning: prints a text with prefix 'Warning: '
+    error: prints a text with prefix 'Error: '
+    ask: prints a question with answers 'yes' and 'no'
+    progress: prints/updates a proogressbar
 
     """
     def __init__(self):
-        self.newline = True
+        # a flag that indicates a presence of 
+        self.newline = True # newline symbol in the end of the last printed line
         self.progressbar = ProgressBar()
         self.lang = Messages()
 
     def out(self, text='', end='\n'):
 
         """
-        Выводит сообщение без префикса. 
+        Prints a text without prefix.
 
-        :text: текст, котоорый будет выведен, тип str
-        :end: завершающий символ, по-умолчанию перевод строки, тип str
+        :text: a text will be printed, type str
+        :end: ending symbol, default is newline, type str
 
         """
         if not self.newline:
             print()
         print(text, end=end)
+        # get a presence of newline symbol
         self.newline = '\n' in end or text.endswith('\n')
 
     def error(self, text, end='\n'):
 
         """
-        Выводит сообщение об ошибке. 
+        Prints error message. 
 
-        :text: текст, котоорый будет выведен, тип str
-        :end: завершающий символ, по-умолчанию перевод строки, тип str
+        :text: a text will be printed, type str
+        :end: ending symbol, default is newline, type str
 
         """
         if text:
@@ -118,10 +118,10 @@ class Console:
     def warning(self, text, end='\n'):
 
         """
-        Выводит предупреждение. 
+        Prints warning message.
 
-        :text: текст, котоорый будет выведен, тип str
-        :end: завершающий символ, по-умолчанию перевод строки, тип str
+        :text: a text will be printed, type str
+        :end: ending symbol, default is newline, type str
 
         """
         if text:
@@ -130,30 +130,30 @@ class Console:
     def progress(self, complete, gotten_bytes):
 
         """
-        Выводит/обновляет прогрессбар.
+        Prints/updates a progressbar.
 
-        :complete: общее количество полученных байт за все сеансы, прогресс равен complete / total * 100%, тип int
-        :gotten_bytes: количество байт, полученное с момента запуска программы, тип int
+        :complete: number of bytes downloaded in all sessions, progress calculates as complete / total * 100%, type int
+        :gotten_bytes: number of bytes downloaded in current session, type int
 
         """
-        # Если перед этим было выведено собщение, то отделяем прогрессбар пустрой строкой
+        # if there was printed a message, add an empty line
         if self.newline:
             print()
-        self.newline = False
+        self.newline = False # there is not newline symbol in the end of the line now
         self.progressbar.update(complete, gotten_bytes)
 
     def ask(self, text, default):
 
         """
-        Выводит сообщение с вопросом, на который необходимо ответить 'да' или 'нет'. 
+        Prints a question with answers 'yes' or 'no'.
 
-        :text: текст, котоорый будет выведен, тип str
-        :default: ответ по-умолчанию (если пользователь просто нажмёт Enter), тип bool
+        :text: a text will be printed, type str
+        :default: default answer (it would be applied when user press Enter), type bool
 
         """
-        YES = ['y', 'yes', 'д', 'да'] # варианты ответов 'да'
-        NO = ['n', 'no', 'н', 'нет'] # варианты ответов 'нет'
-        # Повторять пока пользователь не даст допустимый ответ
+        YES = ['y', 'yes', 'д', 'да'] # answers interpreted as 'yes'
+        NO = ['n', 'no', 'н', 'нет'] # answers interpreted as 'no'
+        # Repeate until user typed a valid answer
         while True:
             self.out(text, end=' ')
             answer = input().lower()
