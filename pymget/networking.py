@@ -334,5 +334,6 @@ class FTPDownloadThread(DownloadThread):
             # в случае ошибки создаём часть с кодом 0, т.е. ошибка подключения
             info = TaskError(self.url.host, 0, self.offset)
         finally:
+            self.conn.close()
             self.data_queue.put(info) # помещаем в очередь часть с данными или ошибкой
             self.ready.set() # в конце помечаем поток завершенным

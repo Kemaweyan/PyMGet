@@ -137,8 +137,10 @@ class Mirror(metaclass=ABCMeta):
         Закрывает соединение
 
         """
-        if self.conn:
+        try:
             self.conn.close()
+        except:
+            pass
 
     @property
     def name(self):
