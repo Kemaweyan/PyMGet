@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# Классы исключений
+# Exception classes
 
 class FatalError(Exception): pass
 class FileError(Exception): pass
