@@ -27,7 +27,7 @@ class CommandLine:
 
         """
         self.lang = Messages()
-        self.argv = argv[1:] # the first argument is a name of program, pass it
+        self.argv = argv[1:] # the first argument is a name of program, skip it
         self.block_size = 4 * 2**20 # default block size is 4MB
         self.filename = '' # filename is unknown
         self.timeout = 10 # default timeout is 10 seconds
@@ -165,7 +165,7 @@ class CommandLine:
                 self.urls.append(arg) # add it to the list of URLs
             else:
                 # argument does not match anything known
-                # show warning and pass the argument
+                # show warning and skip the argument
                 self.console.warning(self.lang.warning.unknown_arg.format(arg))
 
         # create URL objects from the links,

@@ -13,22 +13,20 @@ from pymget.utils import calc_units
 from pymget.mirrors import Mirror
 from pymget.data_queue import DataQueue
 
-# Класс менеджера скачивания
-
 class Manager:
 
     """
-    Класс менеджера скачивания. Создаёт зеркала из списка URL, подключается к ним,
-    раздаёт задания и обрабатывает результаты
+    Creates mirror objects from the list of URLs, connects to them,
+    gives tasks and process results.    
     
     """
     def __init__(self, urls, block_size, filename, timeout):
 
         """
-        :urls: список URL, тип iterable <URL>
-        :block_size: размер блока, тип int
-        :filename: имя файла, указанное пользователем, тип str
-        :timeout: время ожидания ответа сервера, тип float
+        :urls: the list of URLs, type iterable <URL>
+        :block_size: block size, type int
+        :filename: name of output file specified by user, type str
+        :timeout: timeout for server reply, type int
 
         """
         self.lang = Messages()
@@ -36,128 +34,132 @@ class Manager:
         self.data_queue = DataQueue()
         self.block_size = block_size
         self.timeout = timeout
-        self.server_filename = '' # имя файла на серверах, пока неизвестно
-        self.mirrors = {} # зеркала
+        self.server_filename = '' # filename on the server, now is unknown
+        self.mirrors = {} # a dictionary for mirrors, names of hosts would be used as keys
         for url in urls:
-            self.create_mirror(url) # пробуем создать зеркало
-        if not self.mirrors: # если нет зеркал
-            raise FatalError(self.lang.error.no_mirrors) # критическая ошибка
-        if self.server_filename == '': # если имя файла не определилось
-            self.server_filename = 'out' # присваиваем имя out
-        self.outfile = OutputFile(self.server_filename, filename) # создаём объект выходного файла
-        self.context = self.outfile.context # сохраняем объект контекста, связанный с файлом
-        self.offset = self.context.offset # текущее смещение равно смещению из контекста, продолжаем качать дальше
-        self.written_bytes = self.context.written_bytes # кол-во записанных байт равно кол-ву записанных байт из контекста
-        self.old_progress = self.written_bytes # сохраняем прогресс предыдущих сессий (необходимо для корректного вычисления скорости)
-        self.failed_parts = deque(self.context.failed_parts) # загружаем из контекста список неудачных частей
-        self.file_size = 0 # размер файла равен нулю, определится после соединения
-        self.parts_in_progress = [] # список активных заданий
+            self.create_mirror(url) # try to create a mirror
+        if not self.mirrors: # there are no mirrors - error
+            raise FatalError(self.lang.error.no_mirrors)
+        if self.server_filename == '': # can't determine a filename
+            self.server_filename = 'out' # use the name 'out'
+        self.outfile = OutputFile(self.server_filename, filename) # create outfile object
+        self.context = self.outfile.context # save context related to the file
+        self.offset = self.context.offset # get current offset from the context and continue downloading from that offset
+        self.written_bytes = self.context.written_bytes # get the count of written bytes (currect progress) from the context 
+        self.old_progress = self.written_bytes # save currect progress (necessary for correct calculation of download speed)
+        self.failed_parts = deque(self.context.failed_parts) # load a list of failed parts from the context
+        self.file_size = 0 # file size if unknown, is will be determined after connect
+        self.parts_in_progress = [] # a list of active tasks
 
     def create_mirror(self, url):
 
         """
-        Создаёт зеркало и добавляет его в список.
-        В случае неудачи выводит сообщение об ошибке.
+        Creates a mirror and adds that to the list.
+        If failed prints an error message.
 
-        :url: объект URL, описывающий адрес для скачивания, тип URL
+        :url: the URL object, describes the download link, type URL
 
         """
         try:
             mirror = Mirror.create(url, self.block_size, self.timeout)
-            # если имя файла не проходит проверку
+            # compare filename on this server with other ones
             if not self.check_filename(mirror):
-                raise URLError(mirror.filename) # ошибка адреса
-        except URLError as e: # ошибка адреса
-            self.console.error(str(e)) # выводим сообщение об ошибке
+                raise URLError(mirror.filename) # wrong address
+        except URLError as e: # wrong address
+            self.console.error(str(e))
         else:
-            self.mirrors[url.host] = mirror # добавляем зеркало в список
+            self.mirrors[url.host] = mirror # add the mirror to the list
 
     def check_filename(self, mirror):
 
         """
-        Проверяет имя файла на соответствие другим.
+        Checks filename for equality to other servers.
 
-        :mirror: объект зеркала, тип Mirror
+        :mirror: the mirror object, type Mirror
 
         """
-        if self.server_filename == '': # если имя файла ещё не определено
-            if mirror.filename == '': # если если зеркало не смогло определить имя файла
-                self.console.warning(self.lang.warning.empty_filename.format(mirror.name)) # выводим предупреждение что имя пустое
-                return self.console.ask(self.lang.question.anyway_download.format(mirror.name), False) # запрашиваем подтверждение на использование зеркала
-            self.server_filename = mirror.filename # сохраняем имя файла
-            return True # проверка пройдена
-        if os.path.basename(self.server_filename) == mirror.filename: # если имя совпадает
-            return True # проверка пройдена
-        # иначе имя отдличается
-        self.console.warning(self.lang.warning.other_filename.format(mirror.name, self.server_filename)) # выводим предупреждение
-        return self.console.ask(self.lang.question.anyway_download.format(mirror.name), False) # запрашиваем подтверждение на использование зеркала
+        if self.server_filename == '': # the filename is not yes known, so it's the first mirror
+            if mirror.filename == '': # the mirror can't determine filename
+                self.console.warning(self.lang.warning.empty_filename.format(mirror.name))
+                # ask a confirmation to use the mirror
+                return self.console.ask(self.lang.question.anyway_download.format(mirror.name), False)
+            self.server_filename = mirror.filename # save filename
+            return True # the filename is valid
+        if os.path.basename(self.server_filename) == mirror.filename: # filename is the same
+            return True # the filename is valid
+        # this place we reach only if the filename differs
+        self.console.warning(self.lang.warning.other_filename.format(mirror.name, self.server_filename))
+        # ask a confirmation to use the mirror
+        return self.console.ask(self.lang.question.anyway_download.format(mirror.name), False)
 
     def wait_connections(self):
 
         """
-        Ожидает завершения потоков, в случае необходимости
-        запускает подключение и раздаёт задания.
+        Waits completing of threads and starts a connection
+        or gives a task if necessary. 
 
         """
         for name, mirror in self.mirrors.items():
-            if mirror.wait_connection(): # если потоки зеркала зевершены
-                if mirror.ready: # если зеркало готово получить задание
-                    self.give_task(mirror) # даём задание
-                elif mirror.need_connect: # если зеркало требует подключения
-                    mirror.connect() # запускаем подключение
+            if mirror.wait_connection(): # threads of the mirror are not running
+                if mirror.ready: # check the mirror is ready to take a task
+                    self.give_task(mirror) # give a task
+                elif mirror.need_connect: # check the mirror needs a connection
+                    mirror.connect() # start a connection
 
     def give_task(self, mirror):
 
         """
-        Даёт задание зеркалу.
+        Gives a task to the mirror.
 
-        :mirror: объект зеркала, тип Mirror
+        :mirror: the mirror object, type Mirror
 
         """
-        if self.failed_parts: # если есть неудачные части
-            new_part = self.failed_parts.popleft() # извлекаем часть из списка неудачных
-            mirror.download(new_part) # запускаем скачивание
-            self.parts_in_progress.append(new_part) # добавляем задание в список активных
-        elif self.offset < self.file_size or self.file_size == 0: # если ещё не скачано до конца
-            mirror.download(self.offset) # запускаем скачивание с текущего смещения
-            self.parts_in_progress.append(self.offset) # добавляем задание в список активных
-            self.offset += self.block_size # увеличиваем текущее смещение на размер блока
+        if self.failed_parts: # there is failed task
+            failed_offset = self.failed_parts.popleft() # get the offset of that task
+            mirror.download(failed_offset) # start download the part
+            self.parts_in_progress.append(failed_offset) # add the offset to the list of active parts
+        elif self.offset < self.file_size or self.file_size == 0: # the file is not complete
+            mirror.download(self.offset) # start download from current offset
+            self.parts_in_progress.append(self.offset) # add the offset to the list of active parts
+            self.offset += self.block_size # increase current offset
 
     def download(self):
 
         """
-        Выполняет скачивание файла.
+        Downloads the file.
 
         """
-        with self.outfile: # открываем выходной файл
-            while self.file_size == 0 or self.written_bytes < self.file_size: # пока скачивание не завершено
-                self.wait_connections() # ждём готовность зеркал (соединения, раздача заданий)
+        with self.outfile: # open output file
+            while self.file_size == 0 or self.written_bytes < self.file_size: # downloading is not complete
+                self.wait_connections() # wait mirrors (connections, giving tasks)
                 while True:
                     try:
-                        # проверяем состояние очереди, ели она пуста - выбросится исключение
-                        part = self.data_queue.get(False, 0.01)
+                        # check the queue, if it's empty - an exception is raised
+                        task_info = self.data_queue.get(False, 0.01)
                         try:
-                            # выполняем действия, связанные с частью
-                            part.process(self)
+                            # process given result from the mirror
+                            task_info.process(self)
                         finally:
-                            needle_parts = self.parts_in_progress.copy() # части, которые недокачаны
-                            needle_parts.extend(self.failed_parts) # добавляем неудачные части
-                            self.context.update(self.offset, self.written_bytes, needle_parts) # сохраняем контекст
-                    except queue.Empty: # если очередь пуста
-                        break # выходим из цикла (переходим к ожиданию зеркал)
-            # цикл для завершения работы
-            for mirror in self.mirrors.values():
-                mirror.join() # ждём завершения потоков
-                mirror.close() # закрываем соединение
-            self.console.out() # выводим пустую строку в консоль
-        self.context.delete() # удаляем файл контекста
+                            needle_parts = self.parts_in_progress.copy() # save non-completed parts
+                            needle_parts.extend(self.failed_parts) # add failed parts
+                            self.context.update(self.offset, self.written_bytes, needle_parts) # save the context
+                    except queue.Empty: # if the queue is empty
+                        # it meats that there is nothing to do
+                        # and we need to wait mirrors or give a new task
+                        break # quit the loop (go to waiting mirrors)
+        # loop for shut down the program
+        for mirror in self.mirrors.values():
+            mirror.join() # wait threads
+            mirror.close() # close connection
+        self.console.out() # print empty string to console
+        self.context.delete() # remove the context file
 
     def del_active_part(self, offset):
 
         """
-        Удаляет активное задание из списка.
+        Deletes an active task from the list.
 
-        :offset: смещение части относительно начала файла, тип int
+        :offset: the offset of the part, type int
 
         """
         self.parts_in_progress.remove(offset)
@@ -165,111 +167,111 @@ class Manager:
     def add_failed_parts(self, offset):
 
         """
-        Добавляет неудачное задание в список.
+        Adds failed task in the list.
 
-        :offset: смещение части относительно начала файла, тип int
+        :offset: the offset of the part, type int
 
         """
-        self.del_active_part(offset) # неудачное задание более неактивно
+        self.del_active_part(offset) # failed task is inactive
         self.failed_parts.append(offset)
 
     def delete_mirror(self, name):
 
         """
-        Удаляет зеркало.
+        Deleten a mirror.
 
-        :name: имя зеркала, тип str
+        :name: name of the mirror, type str
 
         """
         mirror = self.mirrors[name]
         mirror.join()
         del self.mirrors[name]
 
-    def set_file_size(self, part):
+    def set_file_size(self, task_info):
 
         """
-        Устанавливает размер файла при первом вызове и
-        резервирует место на HDD. При послебующих вызовах
-        сравнивает с ним размеры файлов на других зеркалах.
+        Set the size of the file at first call and allocate
+        a space on HDD. At other calls compares the size
+        with sizes on other mirrors.
 
-        :part: часть, взятая из очереди, тип HeadPart
+        :task_info: the task result from the queue, type TaskHeadData
 
         """
-        if self.file_size == 0: # первый вызов
-            self.file_size = part.file_size
+        if self.file_size == 0: # first call (the filesize is not yet known)
+            self.file_size = task_info.file_size
             self.console.progressbar.total = self.file_size
-            self.outfile.seek(self.file_size - 1) # перемещаемся к последнему байту
-            self.outfile.write(b'\x00') # пишем ноль
+            self.outfile.seek(self.file_size - 1) # seek to last byte
+            self.outfile.write(b'\x00') # write zero
             self.console.out('\n' + self.lang.message.downloading.format(self.outfile.filename, self.file_size, calc_units(self.file_size)) + '\n')
-        elif self.file_size != part.file_size: # запуск не первый и размер файла отличается
-            raise FileSizeError # значит файл "битый" или вообще другой
-        mirror = self.mirrors[part.name]
-        mirror.file_size = part.file_size # зеркалу также сообщаем имя файла
-        mirror.ready = True # зеркало готово качать следующую часть
-        mirror.connect_message() # выводим сообщение о подключении
+        elif self.file_size != task_info.file_size: # call is not the first and the size differs
+            raise FileSizeError # the file is broken or it's another file
+        mirror = self.mirrors[task_info.name]
+        mirror.file_size = task_info.file_size # save the filename in the mirror
+        mirror.ready = True # mark the mirror as ready to download a part
+        mirror.connect_message() # print connection message
 
-    def redirect(self, part):
-
-        """
-        Удаляет старое зеркало и создаёт новое
-        с адресом из редиректа.
-
-        :part: часть, взятая из очереди, тип RedirectPart
+    def redirect(self, task_info):
 
         """
-        self.delete_mirror(part.name)
-        self.create_mirror(part.location)
-        self.console.out('\n' + self.lang.message.redirect.format(part.name, part.location.url))
+        Removes the mirror and creates a new one
+        with new addres from redirect info.
 
-    def do_error(self, part):
-
-        """
-        Выполняется в случае ошибки.
-
-        :part: часть, взятая из очереди, тип Part
+        :task_info: the task result from the queue, type TaskRedirect
 
         """
-        if part.status == 0: # ошибка соединения с сервером
-            msg = self.lang.error.unable_connect.format(part.name)
-        elif part.status == 200: # зеркало не поддерживает скачивание по частям
-            msg = self.lang.error.no_partial.format(part.name)
-        else: # другая ошибка (вероятно HTTP 4xx/5xx)
-            msg = self.lang.error.wrong_http_code.format(part.status)
+        self.delete_mirror(task_info.name)
+        self.create_mirror(task_info.location)
+        self.console.out('\n' + self.lang.message.redirect.format(task_info.name, task_info.location.url))
+
+    def do_error(self, task_info):
+
+        """
+        Executes if an error has occurred.
+
+        :task_info: the task result from the queue, type TaskError
+
+        """
+        if task_info.status == 0: # connection error
+            msg = self.lang.error.unable_connect.format(task_info.name)
+        elif task_info.status == 200: # the mirror does not support partial downlaod
+            msg = self.lang.error.no_partial.format(task_info.name)
+        else: # another error (probably HTTP 4xx/5xx)
+            msg = self.lang.error.wrong_http_code.format(task_info.status)
         self.console.error(msg)
-        self.delete_mirror(part.name) # удаляем зеркало
-        if not self.mirrors: # если не осталось зеркал
-            # дальше качать невозможно, завершаем работу
+        self.delete_mirror(task_info.name) # delete the mirror
+        if not self.mirrors: # if no mirror remains
+            # downloading impossible, quit program
             raise FatalError(self.lang.error.unable_download)
 
-    def set_progress(self, part):
+    def set_progress(self, task_info):
 
         """
-        Обновляет прогресс скачивания файла.
+        Updates the progress of downloading.
 
-        :part: часть, взятая из очереди, тип ProgressPart
+        :task_info: the task result from the queue, type TaskProgress
 
         """
-        # обновляем проресс соответствующего зеркала
-        mirror = self.mirrors[part.name]
-        mirror.task_progress = part.task_progress
-        # прогресс равен ранее записанным данным + сумме скачаного
-        # активными заданиями
+        # update the progress of the mirror
+        mirror = self.mirrors[task_info.name]
+        mirror.task_progress = task_info.task_progress
+        # progress is written data + current progress of
+        # active tasks
         progress = self.written_bytes + sum(map(lambda m: m.task_progress, self.mirrors.values()))
-        # обновляем прогресс в консоли, для вычисления скорости передаём
-        # только скачанное за текущий сеанс
+        # update the progress in the console, to calculate download speed
+        # pass the progress of current session
         self.console.progress(progress, progress - self.old_progress)
 
-    def write_data(self, part):
+    def write_data(self, task_info):
 
         """
-        Пишет данные в файл, освобождает зеркало.
+        Writes data to the file, release the mirror.
 
-        :part: часть, взятая из очереди, тип DataPart
+        :task_info: the task result from the queue, type TaskData
 
         """
-        self.del_active_part(part.offset) # часть более неактивна
-        self.outfile.seek(part.offset) # перемещаемся к началу части
-        self.outfile.write(part.data) # пишем данные
-        self.written_bytes += len(part.data) # увеличиваем число записанных байт
-        mirror = self.mirrors[part.name]
-        mirror.done() # помечаем зеркало завершившим скачивание
+        self.del_active_part(task_info.offset) # the task becomes inactive
+        self.outfile.seek(task_info.offset) # seek to offset of the task
+        self.outfile.write(task_info.data) # write data
+        self.written_bytes += len(task_info.data) # increase the written bytes count
+        mirror = self.mirrors[task_info.name]
+        mirror.done() # mark the mirror as completed downloading
