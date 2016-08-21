@@ -57,7 +57,7 @@ class Manager:
         Creates a mirror and adds that to the list.
         If failed prints an error message.
 
-        :url: the URL object, describes the download link, type URL
+        :url: the URL object describes the download link, type URL
 
         """
         try:

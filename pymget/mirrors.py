@@ -7,24 +7,22 @@ from pymget.console import *
 from pymget.messages import Messages
 from pymget.networking import *
 
-# Классы зеркал
-
 class Mirror(metaclass=ABCMeta):
 
     """
-    Абстрактный базовый класс зеркала
+    Abstract base class for mirrors
 
     """
     @staticmethod
     def create(url, block_size, timeout):
 
         """
-        Статический фабричный метод, создающий объект зеркала
-        в соответствии с протоколом из URL.
+        Static factory method creating an object of the mirror
+        depending on the protocol in URL.
 
-        :url: объект URL, описывающий адрес сервера, тип URL
-        :block_size: размер блока, который необходимо скачать, тип int
-        :timeout: максимальное время ожидания в секундах, тип float
+        :url: the URL object describes the download link, type URL
+        :block_size: block size, type int
+        :timeout: timeout in seconds, type int
 
         """
         if url.protocol == 'http':
@@ -37,9 +35,9 @@ class Mirror(metaclass=ABCMeta):
     def __init__(self, url, block_size, timeout):
 
         """
-        :url: объект URL, описывающий адрес сервера, тип URL
-        :block_size: размер блока, который необходимо скачать, тип int
-        :timeout: максимальное время ожидания в секундах, тип float
+        :url: the URL object describes the download link, type URL
+        :block_size: block size, type int
+        :timeout: timeout in seconds, type int
 
         """
         self.lang = Messages()
@@ -47,75 +45,81 @@ class Mirror(metaclass=ABCMeta):
         self.url = url
         self.block_size = block_size
         self.timeout = timeout
-        self.file_size = 0 # размер файла определяется после подключения
-        self.task_progress = 0 # скачано в текущем задании
-        self.conn = None # объект соединения
-        self.need_connect = True # флаг необходимости подключиться
-        self.ready = False # флаг готовности качать очередную часть
-        self.conn_thread = None # поток соединения
-        self.dnl_thread = None # поток скачивания
+        self.file_size = 0 # the file size will be determined after connect
+        self.task_progress = 0 # the progress of current task
+        self.conn = None # the connection object
+        self.need_connect = True # the flag of a need to connect
+        self.ready = False # the flag of a rediness to download a part
+        self.conn_thread = None # connection thread object
+        self.dnl_thread = None # download thread object
 
     def connect(self):
 
         """
-        Подключается к серверу.
+        Starts connection thread to connect to the server.
 
         """
-        self.ready = False # зеркало не готово качать очередную часть файла
-        self.need_connect = False # зеркало не требует подключения
-        # создаём поток подключения
-        # свойство connetion_thread должено быть определено в наследниках
+        self.ready = False # the mirror is not ready 
+        self.need_connect = False # the mirror does not need a connection
+        # create a connection thread
+        # property connetion_thread should be implemented in inherited classes
         self.conn_thread = self.connection_thread(self.url, self.timeout)
         self.conn_thread.start()
 
     def wait_connection(self):
 
         """
-        Ожидает завершения потоков.
+        Waits completion of threads.
 
-        :return: True если нет активных потоков, False - если есть активный поток
+        :return: True if there is no running threads, False - running thread is present
 
         """
-        if self.conn_thread: # если поток подключения создан
-            if not self.conn_thread.ready.wait(0.001): # проверяем его завершенность с ожиданием 1 мс
+        if self.conn_thread: # connection thread has been created
+            # check completeness (timeout 1 ms)
+            # method wait returns True when the thread sets internal flag
+            # but it does not mean that the thread really terminated
+            if not self.conn_thread.ready.wait(0.001):
                 return False
-            self.conn_thread.join() # ждём истиного завершения
-            self.conn = self.conn_thread.conn # сохраняем объект соединения
-            self.conn_thread = None # удаляем объект потока
-        if self.dnl_thread: # если поток скачивания создан
-            if not self.dnl_thread.ready.wait(0.001): # проверяем его завершенность с ожиданием 1 мс
+            self.conn_thread.join() # wait for real termination of the thread
+            self.conn = self.conn_thread.conn # save the connection object
+            self.conn_thread = None # delete the connection thread object
+        if self.dnl_thread: # download thread has been created
+            # check completeness (timeout 1 ms)
+            # method wait returns True when the thread sets internal flag
+            # but it does not mean that the thread really terminated
+            if not self.dnl_thread.ready.wait(0.001):
                 return False
-            self.dnl_thread.join() # ждём истиного завершения
-            self.dnl_thread = None # удаляем объект потока
+            self.dnl_thread.join() # wait for real termination of the thread
+            self.dnl_thread = None # delete the download thread object
         return True
 
     def download(self, offset):
 
         """
-        Запускает поток скачивания очередной части.
+        Starts downlaod thread that downloads the next part.
 
-        :offset: смещение, с которого начинать скачивать, тип int
+        :offset: the offset of the part, type int
 
         """
-        self.ready = False # зеркало не готово качать очередную часть файла
-        # создаём поток скачивания
-        # свойство download_thread должено быть определено в наследниках
+        self.ready = False # the mirror does not ready to get a task
+        # create download thread
+        # property download_thread should be implemented in inherited classes
         self.dnl_thread = self.download_thread(self.url, self.conn, offset, self.block_size)
         self.dnl_thread.start()
 
     def done(self):
 
         """
-        Помечает зеркало как завершившее скачивание
+        Marks the mirror as completed downloading.
 
         """
-        self.task_progress = 0 # задание завершено, очищаем кол-во скачаного
-        self.ready = True # зеркало готово качать очередную часть
+        self.task_progress = 0 # task is done, clear progress
+        self.ready = True # the mirror is ready to get the next task
 
     def connect_message(self):
 
         """
-        Выводит сообщение о соединении с сервером
+        Prints connection message.
 
         """
         self.console.out(self.lang.message.connected.format(self.url.host))
@@ -123,7 +127,7 @@ class Mirror(metaclass=ABCMeta):
     def join(self):
 
         """
-        Ожидает завершение созданных потоков
+        Waits for terminating of existing threads.
 
         """
         if self.conn_thread:
@@ -134,7 +138,7 @@ class Mirror(metaclass=ABCMeta):
     def close(self):
 
         """
-        Закрывает соединение
+        Closes connection if it exists.
 
         """
         try:
@@ -146,7 +150,7 @@ class Mirror(metaclass=ABCMeta):
     def name(self):
 
         """
-        Имя зеркала
+        The name of the mirror.
 
         """
         return self.url.host
@@ -155,28 +159,28 @@ class Mirror(metaclass=ABCMeta):
     def filename(self):
 
         """
-        Имя файла
+        The filename on the server.
 
         """
         return self.url.filename
 
     @abstractproperty
-    def connection_thread(self): pass # абстрактное свойство, возвращающее класс потока подключения
+    def connection_thread(self): pass # abstract property, should return a classname of connection object
 
     @abstractproperty
-    def download_thread(self): pass # абстрактное свойство, возвращающее класс потока скачивания
+    def download_thread(self): pass # abstract property, should return a classname of download object
 
 class HTTXMirror(Mirror):
 
     """
-    Абстрактный базовый класс для HTTP и HTTPS зеркал.
+    Abstract base class for HTTP and HTTPs mirrors.
 
     """
     @property
     def download_thread(self):
 
         """
-        Возвращает класс потока скачивания
+        Returns download thread class, it's common for HTTP and HTTPS.
 
         """
         return HTTXDownloadThread
@@ -184,14 +188,14 @@ class HTTXMirror(Mirror):
 class HTTPMirror(HTTXMirror):
 
     """
-    Класс зеркала HTTP
+    HTTP mirror.
 
     """
     @property
     def connection_thread(self):
 
         """
-        Возвращает класс потока подключения
+        Returns connection thread class.
 
         """
         return HTTPThread
@@ -199,14 +203,14 @@ class HTTPMirror(HTTXMirror):
 class HTTPSMirror(HTTXMirror):
 
     """
-    Класс зеркала HTTPS
+    HTTPS mirror.
 
     """
     @property
     def connection_thread(self):
 
         """
-        Возвращает класс потока подключения
+        Returns connection thread class.
 
         """
         return HTTPSThread
@@ -214,35 +218,38 @@ class HTTPSMirror(HTTXMirror):
 class FTPMirror(Mirror):
 
     """
-    Класс зеркала FTP
+    FTP mirror.
 
     """
     def __init__(self, url, block_size, timeout):
 
         """
-        :url: объект URL, описывающий адрес сервера, тип URL
-        :block_size: размер блока, который необходимо скачать, тип int
-        :timeout: максимальное время ожидания в секундах, тип float
+        :url: the URL object describes the download link, type URL
+        :block_size: block size, type int
+        :timeout: timeout in seconds, type int
 
         """
         Mirror.__init__(self, url, block_size, timeout)
-        self.connected = False # флаг, сигнализирующий, что сообщение о подключении уже выведено
+        # FTP mirror re-connects every time when get a new task,
+        # there is a flag indicates that a connection message already shown
+        self.connected = False
 
     def done(self):
 
         """
-        Помечает зеркало как завершившее скачивание
+        Marks the mirror as completed downloading.
 
         """
         Mirror.done(self)
-        self.ready = False # в отличие от HTTX FTP сразу не готово качать следующую часть
-        self.need_connect = True # а нуждается в переподключении
+        self.ready = False # FTP mirror is not ready to get the next task
+        # without reconnect
+        self.need_connect = True # it needs a new connection
 
     @property
     def connection_thread(self):
 
         """
-        Возвращает класс потока подключения
+        Returns connection thread class.
 
         """
         return FTPThread
@@ -251,7 +258,7 @@ class FTPMirror(Mirror):
     def download_thread(self):
 
         """
-        Возвращает класс потока скачивания
+        Returns downloading thread class.
 
         """
         return FTPDownloadThread
@@ -259,24 +266,24 @@ class FTPMirror(Mirror):
     def download(self, offset):
 
         """
-        Запускает скачивания очередной части.
+        Starts downlaod thread that downloads the next part.
 
-        :offset: смещение, с которого начинать скачивать, тип int
+        :offset: the offset of the part, type int
 
         """
-        self.ready = False # зеркало не готово качать очередную часть файла
-        # создаём поток скачивания
-        # но в отличие от HTTX передаём ему ещё параметр file_size
+        self.ready = False # the mirror is not ready to get the next task
+        # create download thread
+        # but FTP downlaod thread also needs file_size argument
         self.dnl_thread = self.download_thread(self.url, self.conn, offset, self.block_size, self.file_size)
         self.dnl_thread.start()
 
     def connect_message(self):
 
         """
-        Вывод сообщение о соединении с сервером
+        Prints connection message.
 
         """
-        if self.connected: # если уже выводилось - выходим
+        if self.connected: # if it's alredy shown - do nothing
             return
-        self.connected = True # сообщение уже выводилось
-        Mirror.connect_message(self)
+        self.connected = True # set the flag that the message already shown
+        Mirror.connect_message(self) # show the message
