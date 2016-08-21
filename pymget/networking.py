@@ -12,12 +12,10 @@ from pymget.data_queue import DataQueue
 
 VERSION = '1.34'
 
-# Классы для работы с сетью
-
 class URL:
 
     """
-    Класс адреса URL. Поддерживаемые протоколы: HTTP/HTTPS/FTP
+    Parses url string. Supported protocols: HTTP/HTTPS/FTP
 
     """
     url_re = re.compile('^(https?|ftp)://([\w\.-]+(?::\d+)?)((?:/(.+?))?/([^\/]+)?)?$', re.I)
@@ -25,23 +23,22 @@ class URL:
     def __init__(self, url):
 
         """
-        :url: строка url, тип str
+        :url: url string, type str
 
         """
         self.url = url
-
-        # регулярное выражение проверяет правильность URL и разбивает её на составные части:
-        # протокол, хост (с портом), путь к файлу, имя файла
-        # путь в файлу + имя файла также объединяется в запрос
+        # regular expression validates url and splits it on following parts:
+        # protocol (1), host with port if present (2), path to the file (4), filename (5)
+        # path + filename also are united to request (3)
         matches = self.url_re.match(url)
-        # строка не соответствует шаблону - ошибка
+        # the url string does not mutch to pattern - error
         if not matches:
             raise URLError(url)
-        self.protocol = matches.group(1).lower() # http, https или ftp
-        self.host = matches.group(2) # имя хоста или ip адрес в формате host или host:port
-        self.request = matches.group(3) # запрос, начинающийся с /
-        self.path = matches.group(4) # путь к файлу без начального /
-        self.filename = matches.group(5) # имя файла
+        self.protocol = matches.group(1).lower() # http, https or ftp
+        self.host = matches.group(2) # hostname or ip address in format host or host:port
+        self.request = matches.group(3) # the request beginning with /
+        self.path = matches.group(4) # path to the file without beginning /
+        self.filename = matches.group(5) # filename
 
 
 
@@ -49,36 +46,36 @@ class URL:
 class NetworkThread(threading.Thread, metaclass=ABCMeta):
 
     """
-    Базовый абстрактный класс, наследуемый сетевыми потоками.
+    Abstract base class for network threads.
 
     """
-    # строка user_agent для передачи HTTP(S) серверам
+    # user_agent string for HTTP(S) servers
     user_agent = 'PyMGet/{} ({} {}, {})'.format(VERSION, platform.uname().system, platform.uname().machine, platform.uname().release)
 
     def __init__(self):
         threading.Thread.__init__(self)
         self.data_queue = DataQueue()
-        self.ready = threading.Event() # индикатор завершения потока
+        self.ready = threading.Event() # a flag that the thread is completed
 
     @abstractmethod
-    def run(self): pass # выполняется в отдельном потоке, должен быть реализован в унаследованных классах
+    def run(self): pass # runs in separate thread, should be implemented in inherited classes
 
 
 
 
-# Классы для подключения к серверу
+# Connection threads classes
 
 class ConnectionThread(NetworkThread):
 
     """
-    Базовый абстрактный класс для классов соединений.
+    Abstract base class for connection threads.
 
     """
     def __init__(self, url, timeout):
 
         """
-        :url: объект URL, описывающий адрес сервера, к которому необходимо подключиться, тип URL
-        :timeout: максимальное время ожидания в секундах, тип float
+        :url: the URL object describes the download link, type URL
+        :timeout: timeout in seconds, type int
 
         """
         NetworkThread.__init__(self)
@@ -88,81 +85,84 @@ class ConnectionThread(NetworkThread):
 
     def run(self):
         """
-        Выполняется в отдельном потоке, вызывает абстрактный метод connect.
-        Помещает объект типа TaskInfo в очередь менеджера.
+        Runs in separate thread, calls an abstract method connect.
+        Puts a TaskInfo object in the queue.
 
         """
         try:
-            # объект info создаёт объект класса-наследника
+            # connect method implementation should return a TaskInfo object
             info = self.connect()
         except:
-            # в случае ошибки создаёт объект типа TaskHeadError
+            # if an error has occurred create a TaskHeadError object
             info = TaskHeadError(self.url.host, 0)
         finally:
-            self.data_queue.put(info) # в конце помещаем часть в очередь
-            self.ready.set() # и помечаем поток завершенным
+            self.data_queue.put(info) # put the result in the queue
+            self.ready.set() # and mark the thread as completed
 
     @abstractmethod
-    def connect(self): pass # метод, выполняющий подключение, должен быть реализован в унаследованных классах. Возвращает объект типа TaskInfo
+    def connect(self): pass # make connection, should be implemented in subclasses. Should return a TaskInfo object
 
 class HTTXThread(ConnectionThread):
 
     """
-    Базовый класс для HTTP и HTTPS протоколов
+    Base class for HTTP and HTTPS protocols.
 
     """
     def redirect(self, location, status):
         
         """
-        Создаёт часть для перенаправления запроса.
+        Reates a TaskRedirect object to redirect mirror.
+
+        :location: a new URL from redirect header, type str
+        :status: a response status, type int
 
         """
         url = ''
-        # строка location может быть как полным адресом, так и частичным.
-        # Кроме того, частичный адрес может начинаться с /, т.е. с корневого каталога сервера,
-        # или же быть относительным текущего пути.
-        # Поэтому location разбиваем на 3 части:
-        # 1) хост с указанием протокола http(s)://site.com
-        # 2) остальная часть ссылки (включая первый / если он есть)
-        # 3) начальный / если есть
+        # location string could contain either an abolute path or a relative one.
+        # Also relative address could begin with /, i.e. from the root directory
+        # on the same server, or be related to current path.
+        # Therefore we split location for 3 parts:
+        # 1) a host with a protocol http(s)://site.com
+        # 2) the rest of the link (including first / if it presents)
+        # 3) beginning / if it presents (as a flag)
         redirect_re = re.compile('^(https?://[^/]+)?((/)?(?:.*))$', re.I)
         matches = redirect_re.match(location)
         if not matches:
             return TaskHeadError(self.url.host, status)
-        if matches.group(1): # если location содержит хост
-            url = location # значит путь полный, перенаправляем на него
-        elif matches.group(3): # если location начинаеся с /
-            # значит путь задан относительн окорня сервера
-            # добавляем путь к хосту
+        if matches.group(1): # if there is a host in the location
+            url = location # the path is absolute, redirect there
+        elif matches.group(3): # there is beginning /
+            # the path is related to the root directory of the same server
+            # add a path to the host
             url = '{}://{}{}'.format(self.url.protocol, self.url.host, matches.group(2))
-        else: # путь задан относительно текущего каталога
-            # выделяем из запроса путь
+        else: # the path is related to current directory on the server
+            # get current path from the request
             path = self.url.request.rsplit('/', 1)[0] + '/'
-            # добавляем новый путь к текущему каталогу, а также хосту
+            # add a new path to current path with the host
             url = '{}://{}{}'.format(self.url.protocol, self.url.host, path + matches.group(2))
         return TaskRedirect(self.url.host, status, URL(url))
 
     def connect(self):
         
         """
-        Осуществляет подключение к серверу.
-        Классы-наследники обязаны определить свойство protocol,
-        возвращающее client.HTTPConnection или client.HTTPSConnection
+        Make a connectio nto the server.
+        Subclasses should implemet a property 'protocol',
+        returning client.HTTPConnection or client.HTTPSConnection
 
         """
-        # в заголовке передаёт User-Agent и Refferer - главную страницу сервера для случаев, 
-        # когда сервер блокирует скачивание по ссылкам со сторонних ресурсов
+        # sends User-Agent and Refferer (main page on the server) in the header, 
+        # it's necessary when the server blocks downloading via links from other resources
         headers = {'User-Agent': self.user_agent, 'Refferer': '{}://{}/'.format(self.url.protocol, self.url.host)}
         self.conn = self.protocol(self.url.host, timeout=self.timeout)
         self.conn.request('HEAD', self.url.request, headers=headers)
         response = self.conn.getresponse()
 
-        # если статус 3xx
+        # status 3xx
         if response.status // 100 == 3:
             location = response.getheader('Location')
             return self.redirect(location, response.status)
 
-        if response.status != 200: # ошибка HTTP(S)
+        if response.status != 200: # HTTP(S) error
             return TaskHeadError(self.url.host, response.status)
 
         file_size = int(response.getheader('Content-Length'))
@@ -170,15 +170,15 @@ class HTTXThread(ConnectionThread):
         response.close()
         return info
 
-    # абстрактное свойство, наследники обязаны впернуть класс для соединения
+    # abstract property, subclasses should implement it and return class for connection
     @abstractproperty
     def protocol(self): pass
 
 class HTTPThread(HTTXThread):
 
     """
-    Класс для подключения по протоколу HTTP.
-    Определяет свойство protocol как client.HTTPConnection
+    HTTP cponnection thread class.
+    Implements property 'protocol' as client.HTTPConnection
 
     """
     @property
@@ -188,8 +188,8 @@ class HTTPThread(HTTXThread):
 class HTTPSThread(HTTXThread):
 
     """
-    Класс для подключения по протоколу HTTPS.
-    Определяет свойство protocol как client.HTTPSConnection
+    HTTPS cponnection thread class.
+    Implements property 'protocol' as client.HTTPSConnection
 
     """
     @property
@@ -199,13 +199,13 @@ class HTTPSThread(HTTXThread):
 class FTPThread(ConnectionThread):
 
     """
-    Класс для подключения по протоколу FTP.
+    FTP connection thread class.
 
     """
     def connect(self):
         """
-        Осуществляет анонимное подключение к FTP серверу, переходит в каталог
-        с запрошенным файлом и определяет его размер.
+        Makes an anonymous connection to FTP server, changes current
+        directory to directory with requested file and gets its size.
 
         """
         self.conn = ftplib.FTP(self.url.host, 'anonymous', '', timeout=self.timeout)
@@ -213,28 +213,28 @@ class FTPThread(ConnectionThread):
         self.conn.cwd(self.url.path)
         self.conn.voidcmd('PASV')
         file_size = self.conn.size(self.url.filename)
-        return TaskHeadData(self.url.host, 200, file_size) # устанавливаем код 200 для совместимости с HTTP
+        return TaskHeadData(self.url.host, 200, file_size) # set the code 200 for compatibility with HTTP
 
 
 
 
-# Классы для скачивания данных
+# Download threads classes
 
 class DownloadThread(NetworkThread):
 
     """
-    Абстрактный базовый класс потока для скачивания.
+    Abstract base class for download threads.
 
     """
-    FRAGMENT_SIZE = 32 * 2**10 # размер фрагмента, который будет передаваться в главный поток, равен 32кБ
+    FRAGMENT_SIZE = 32 * 2**10 # the size of fragments that will be sent to the main thread, equals 32kB
 
     def __init__(self, url, conn, offset, block_size):
 
         """
-        :url: объект URL, описывающий ссылку для скачивания, тип URL
-        :conn: объект соединения, тип client.HTTPConnection, client.HTTPSConnection или ftplib.FTP
-        :offset: смещение, с которого начинать скачивание, тип int
-        :block_size: размер блока, который необходимо скачать, тип int
+        :url: the URL object describes the download link, type URL
+        :conn: the connection object, type client.HTTPConnection, client.HTTPSConnection or ftplib.FTP
+        :offset: the offset of the part to download, type int
+        :block_size: block size, type int
 
         """
         NetworkThread.__init__(self)
@@ -246,58 +246,60 @@ class DownloadThread(NetworkThread):
 class HTTXDownloadThread(DownloadThread):
 
     """
-    Класс потока для скачивания с HTTP/HTTPS.
+    HTTP/HTTPS downlaod thread class.
+    There is no difference in behavior
+    of HTTP and HTTPS after connection.
 
     """
     def run(self):
         """
-        Функция скачивания, выполняется в отдельном потоке
+        Downloads the file, runs in separate thread.
 
         """
-        # в заголовке передаёт диапазон скачивания от offset до offset + block_size - 1 (включительно)
+        # sends download range from offset to offset + block_size - 1 (including) in the header
         headers = {'User-Agent': self.user_agent, 'Refferer': '{}://{}/'.format(self.url.protocol, self.url.host), 
                     'Range': 'bytes={}-{}'.format(self.offset, self.offset + self.block_size - 1)}
-        status = 0 # изначально статус 0, что значит ошибку соединения
+        status = 0 # set status to 0 that means a connection error
         try:
             self.conn.request('GET', self.url.request, headers=headers)
             response = self.conn.getresponse()
-            # сервер не поддерживает скачивание по частям - ошибка
+            # the server does not support partial downloading - error
             if response.status != 206:
                 status = response.status
                 raise MirrorError
-            part_size = int(response.getheader('Content-Length')) # столько байт сервер передал клиенту
-            data = b'' # буфер для данных
-            # цикл пока не получены все переданные байты
+            part_size = int(response.getheader('Content-Length')) # actual count of bytes sent by the server
+            data = b'' # data buffer
+            # loop while all data will be received
             while part_size > len(data):
                 data_fragment = response.read(self.FRAGMENT_SIZE)
-                data += data_fragment # добаляем данные в буффер
-                # добавляем в очередь часть прогресса
+                data += data_fragment # add data to the buffer
+                # put progress information into the queue
                 info = TaskProgress(self.url.host, response.status, len(data))
                 self.data_queue.put(info)
-            # после завершения цикла создаём часть с данными
+            # when the downloading loop finished, create TaskData object
             info = TaskData(self.url.host, response.status, self.offset, data)
             response.close()
         except:
-            # в случае ошибки помещаем в очередь часть со статусом
+            # if an error has occurred - create a TaskError object
             info = TaskError(self.url.host, status, self.offset)
         finally:
-            self.data_queue.put(info) # отправляем часть с данными или ошибкой
-            self.ready.set() # в конце помечаем поток завершенным
+            self.data_queue.put(info) # put result TaskInfo object into the queue
+            self.ready.set() # mark the thread as comleted
 
 class FTPDownloadThread(DownloadThread):
 
     """
-    Класс для скачивания с FTP.
+    FTP download thread class.
 
     """
     def __init__(self, url, conn, offset, block_size, file_size):
 
         """
-        :url: объект URL, описывающий адрес для скачивания, тип URL
-        :conn: объект соединения, тип ftplib.FTP
-        :offset: смещение, с которого начинать скачивание, тип int
-        :block_size: размер блока, который необходимо скачать, тип int
-        :file_size: размер файла, полученный при подключении, тип int
+        :url: the URL object describes the download link, type URL
+        :conn: the connection object, type ftplib.FTP
+        :offset: the offset of the part to download, type int
+        :block_size: block size, type int
+        :file_size: filesize gotten from connection thread, type int
 
         """
         DownloadThread.__init__(self, url, conn, offset, block_size)
@@ -306,34 +308,33 @@ class FTPDownloadThread(DownloadThread):
     def run(self):
 
         """
-        Функция скачивания, выполняется в отдельном потоке
+        Downloads the file, runs in separate thread.
 
         """
-        data = b'' # буфер для данных
+        data = b'' # data buffer
         try:
             sock = self.conn.transfercmd('RETR ' + self.url.filename, self.offset)
-            # цикл пока получено байт меньше, чем размер блока
-            # однако, последний блок может быть меньше этого размера, т.к. размер файла не обязательно кратен размеру блоку
+            # loop while received data size is less than block size
+            # however the last block could be lesser than that size
             while len(data) < self.block_size:
-                # получаем данные, но не более размера фрагмента 
-                # и кол-ва данных, оставшихся до целого блока
+                # get data, but not more than fragment size
+                # and the size remaining to full block
                 data_fragment = sock.recv(min(self.block_size - len(data), self.FRAGMENT_SIZE))
-                if not data_fragment: # в случае отсутствия данных - ошибка
+                if not data_fragment: # if there is no data - error
                     raise MirrorError
-                data += data_fragment # добавляем данные в буфер
+                data += data_fragment # add data to the buffer
                 info = TaskProgress(self.url.host, 206, len(data))
                 self.data_queue.put(info)
-                # считаем блок завершенным, если получено байт больше или равно размеру блоку
-                # или если достингнут конец файла
-                if self.block_size - len(data) <= 0 or self.file_size - self.offset - len(data) <= 0:
+                # if reached the end of the file - exit loop
+                if self.file_size - self.offset - len(data) <= 0:
                     break
-            # после завершения цикла создаём часть с данными
+            # when the downloading loop finished, create TaskData object
             info = TaskData(self.url.host, 206, self.offset, data)
             sock.close()
         except:
-            # в случае ошибки создаём часть с кодом 0, т.е. ошибка подключения
+            # if an error has occurred - create a TaskError object
             info = TaskError(self.url.host, 0, self.offset)
         finally:
             self.conn.close()
-            self.data_queue.put(info) # помещаем в очередь часть с данными или ошибкой
-            self.ready.set() # в конце помечаем поток завершенным
+            self.data_queue.put(info) # put result TaskInfo object into the queue
+            self.ready.set() # mark the thread as comleted

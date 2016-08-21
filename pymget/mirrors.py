@@ -62,7 +62,7 @@ class Mirror(metaclass=ABCMeta):
         self.ready = False # the mirror is not ready 
         self.need_connect = False # the mirror does not need a connection
         # create a connection thread
-        # property connetion_thread should be implemented in inherited classes
+        # property connetion_thread should be implemented in subclasses
         self.conn_thread = self.connection_thread(self.url, self.timeout)
         self.conn_thread.start()
 
@@ -103,7 +103,7 @@ class Mirror(metaclass=ABCMeta):
         """
         self.ready = False # the mirror does not ready to get a task
         # create download thread
-        # property download_thread should be implemented in inherited classes
+        # property download_thread should be implemented in subclasses
         self.dnl_thread = self.download_thread(self.url, self.conn, offset, self.block_size)
         self.dnl_thread.start()
 
