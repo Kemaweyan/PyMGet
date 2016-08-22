@@ -6,20 +6,18 @@ from abc import ABCMeta, abstractmethod
 from pymget.console import Console
 from pymget.errors import FileSizeError
 
-# Классы частей (объектов, помещаемых потоками в очередь)
-
 class TaskInfo(metaclass=ABCMeta):
 
     """
-    Базовый абстрактный класс части.
-    Наследники обязаны реализовать метод process, который будет выполнять необходимые действия.
+    Abstract base class for object with a result of task performance.
+    Subclasses should implement a method 'process' that performs necessary actions.
 
     """
     def __init__(self, name, status):
 
         """
-        :name: имя зеркала, которое отправило часть, тип str
-        :status: статус выполнения операции потоком, тип int
+        :name: name of the mirror put the object in the queue, type str
+        :status: status of performance, type int
 
         """
         self.console = Console()
@@ -27,72 +25,74 @@ class TaskInfo(metaclass=ABCMeta):
         self.status = status
 
     @abstractmethod
-    def process(self, manager): pass # метод, выполняющий действия в зависимости от типа части
+    def process(self, manager): pass # should be implemented in subclasses
 
 class TaskHeadData(TaskInfo):
 
     """
-    Заголовочная часть, содержит информацию о файле.
+    Contains information of the file.
     
     """
     def __init__(self, name, status, file_size):
 
         """
-        :name: имя зеркала, которое отправило часть, тип str
-        :status: статус выполнения операции потоком, тип int
-        :file_size: размер файла, тип int
+        :name: name of the mirror put the object in the queue, type str
+        :status: status of performance, type int
+        :file_size: file size, type int
 
         """
         TaskInfo.__init__(self, name, status)
         self.file_size = file_size
 
     def process(self, manager):
+
         """
-        Выполняется в случае корректного соединения с сервером
+        Executes when connection to server succed.
 
         """
         try:
-            manager.set_file_size(self) # указывает размер файла менеджеру
-        except FileSizeError:
+            manager.set_file_size(self) # tell file size to the Manager
+        except FileSizeError: # file size differs
             self.console.error(filesize_error.format(self.name, self.file_size, manager.file_size))
-            manager.delete_mirror(self.name) # удаляем зеркало
+            manager.delete_mirror(self.name) # delete the mirror
 
 class TaskRedirect(TaskInfo):
 
     """
-    Часть перенаправления, содержит новую ссылку.
+    Redirects the mirror.
     
     """
     def __init__(self, name, status, location):
 
         """
-        :name: имя зеркала, которое отправило часть, тип str
-        :status: статус выполнения операции потоком, тип int
-        :location: ссылка на новое место, тип URL
+        :name: name of the mirror put the object in the queue, type str
+        :status: status of performance, type int
+        :location: a link to the new place, type URL
 
         """
         TaskInfo.__init__(self, name, status)
         self.location = location
 
     def process(self, manager):
-        """
-        Выполняется в случае перенаправления на другой адрес
 
         """
-        manager.redirect(self) # перенаправляем
+        Executes when server redirects request.
+
+        """
+        manager.redirect(self) # do redirect
 
 class TaskProgress(TaskInfo):
 
     """
-    Часть, сообщающая основному потоку прогресс скачивания.
+    Sets new progress value.
     
     """
     def __init__(self, name, status, task_progress):
 
         """
-        :name: имя зеркала, которое отправило часть, тип str
-        :status: статус выполнения операции потоком, тип int
-        ：task_progress： количество данных, полученных за данный сеанс, тип int
+        :name: name of the mirror put the object in the queue, type str
+        :status: status of performance, type int
+        :task_progress: count of bytes received in current task, type int
 
         """
         TaskInfo.__init__(self, name, status)
@@ -101,62 +101,64 @@ class TaskProgress(TaskInfo):
     def process(self, manager):
 
         """
-        Устанавливает прогресс текущего задания.
+        Sets the progress of current task.
 
         """
-        manager.set_progress(self) # помечаем задание выполненым
+        manager.set_progress(self)
 
 class TaskHeadError(TaskInfo):
 
     """
-    Часть ошибки подключения.
+    Contains information about connection error.
     
     """
     def process(self, manager):
-        """
-        Выполняется в случае ошибки подключения
 
         """
-        manager.do_error(self) # обрабатываем ошибку
+        Executes when a connection error has occurred.
+
+        """
+        manager.do_error(self) # process an error
 
 class TaskError(TaskHeadError):
 
     """
-    Часть ошибки скачивания.
+    Contains information about download error.
     
     """
     def __init__(self, name, status, offset):
 
         """
-        :name: имя зеркала, которое отправило часть, тип str
-        :status: статус выполнения операции потоком, тип int
-        :offset: смещение в задании, тип int
+        :name: name of the mirror put the object in the queue, type str
+        :status: status of performance, type int
+        :offset: offset given to the task, type int
 
         """
         TaskHeadError.__init__(self, name, status)
         self.offset = offset
 
     def process(self, manager):
-        """
-        Выполняется в случае ошибки скачивания
 
         """
-        manager.add_failed_parts(self.offset) # добавляем смещение части в список невыполненых
-        TaskHeadError.process(self, manager) # обрабатываем ошибку
+        Executes when a download error has occurred.
+
+        """
+        manager.add_failed_parts(self.offset) # add the task to failed
+        TaskHeadError.process(self, manager) # process an
 
 class TaskData(TaskError):
 
     """
-    Часть с данными.
+    Contains file data.
     
     """
     def __init__(self, name, status, offset, data):
 
         """
-        :name: имя зеркала, которое отправило часть, тип str
-        :status: статус выполнения операции потоком, тип int
-        :offset: смещение в задании, тип int
-        :data: данные, тип sequence
+        :name: name of the mirror put the object in the queue, type str
+        :status: status of performance, type int
+        :offset: offset given to the task, type int
+        :data: file data, type sequence
 
         """
         TaskError.__init__(self, name, status, offset)
@@ -165,7 +167,7 @@ class TaskData(TaskError):
     def process(self, manager):
 
         """
-        Выполняется при получении данных
+        Executes when the task successfully completed.
 
         """
-        manager.write_data(self) # пишем данные
+        manager.write_data(self) # write data
