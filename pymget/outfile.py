@@ -8,110 +8,124 @@ from pymget.console import *
 from pymget.messages import Messages
 from pymget.errors import FileError, CancelError
 
-# Класс выходного файла
+# Output file class
 
 class OutputFile:
 
     """
-    Класс выходного файла. Поддерживает менеджер контекста.
+    Output file class. Writes data to the file.
+    Supports the context manager ('with' statement).
 
-    seek: перемещает указатель файла
-    write: пишет в файл
+    Methods:
+
+    seek: moves internal pointer to specified offset
+    write: writes data to the file
 
     """
     def __init__(self, filename, path):
 
         """
-        :filename: имя файла на сервере, тип str
-        :path: путь для сохранения файла, тип str
+        :filename: filename on the server, type str
+        :path: path for file saving specified by user, type str
 
         """
         self.lang = Messages()
         self.console = Console()
-        if not path: # пользователь не указал путь
-            self.filename = filename # имя файла берём с сервера
-            self.path = '' # путь пуст
-            self.fullpath = filename # полный путь - просто имя файла
-        elif os.path.isdir(path): # если пользователь указал путь к папке
-            self.filename = filename # имя файла берём с сервера
-            self.path = path # используем указанный пользователем путь
-            self.fullpath = path.rstrip(os.sep) + os.sep + filename # полный путь для сохранения
-        else: # если указанный пользователем путь - не папка
-            self.filename = os.path.basename(path) # извлекаем из пути имя файла
-            self.path = os.path.dirname(path) # и путь к файлу 
-            self.fullpath = path # полный путь указан пользователем
-            self.check_folders() # проверяем существование папок
-        self.context = Context(self.fullpath)
-        self.file = self.open_file(self.context.exists)
+        if not path: # user has not specified the path
+            self.filename = filename # use filename from the server
+            self.path = '' # path is empty (write into current directory)
+            self.fullpath = filename # use just filename as a fullpath
+        elif os.path.isdir(path): # user specified the path to a folder
+            self.filename = filename # use filename from the server
+            self.path = path # use specified path
+            # fullpath is a combination of path and filename
+            self.fullpath = path.rstrip(os.sep) + os.sep + filename
+        else: # the specified path is not a folder
+            self.filename = os.path.basename(path) # extract filename from the path
+            self.path = os.path.dirname(path) # extract path to directory too 
+            self.fullpath = path # use specified by user path as fullpath
+            self.check_folders() # check all folders in the path for existence
+        self.context = Context(self.fullpath) # create context related to the file
+        self.file = self.open_file() # open the file (get mode from the context)
 
     def check_folders(self):
         
         """
-        Проверяет существование каталогов в указанном пути.
-        Если папка не существует - запрашивает создание.
+        Check existence of all directories in the path.
+        If directory does not exist - requests 
+        a confirmation to create it.
 
         """
-        if os.path.isdir(self.path): # папка существует
-            return # ничего не делаем
-        folders = self.path.split(os.sep) # разбиваем путь на составляющие
+        if os.path.isdir(self.path): # the directory exists
+            return # do nothing
+        folders = self.path.split(os.sep) # split the path to components
         for i in range(len(folders)):
-            # для каждой подпапки в пути
+            # for each folders in the path
             path = os.sep.join(folders[:i + 1])
-            if not path: # если путь пустой
-                # значит split "съел" первый /
-                path = os.sep # и первая папка - корень
-            if os.path.isdir(path): # если папка существует
-                continue # поропускаем
-            if os.path.isfile(path): # если это файл
-                raise FileError(self.lang.error.dir_is_file.format(path)) # ошибка пути
-            if not self.console.ask(self.lang.question.create_dir.format(path), True): # запрашиваем создание
-                # и если пользователь ответил "нет" 
-                raise CancelError(self.lang.message.cancel) # отмена скачивания
+            if not path: # if the path is empty
+                # it hapens in UNIX-like systems when
+                # the absolute path is specified (with first /)
+                # in this case the first component after splitting
+                # would be empty string,
+                path = os.sep # so the first folder is /
+            if os.path.isdir(path): # folder exists
+                continue # skip it
+            if os.path.isfile(path): # the path component is a file
+                raise FileError(self.lang.error.dir_is_file.format(path)) # wrong path
+            # we reach this place only if the folder does not exist
+            if not self.console.ask(self.lang.question.create_dir.format(path), True): # ask for creating
+                # user denied a request
+                raise CancelError(self.lang.message.cancel) # cancel downloading
             try:
-                os.mkdir(path) # создаём папку
+                os.mkdir(path) # create a folder
             except:
-                # не удалось создать папку
+                # can't create a folder
                 raise FileError(self.lang.error.unable_create_dir.format(path, self.lang.error.permission_denied))
 
-    def open_file(self, context_exists):
+    def open_file(self):
 
         """
-        Открывает файл для записи или обновления.
-        Проверяет наличие контекста (файл *.mget): если контекста нет - создаёт новый файл или запрашивает перезапись существующего.
-        Если контекст есть, то открывает файл для обновления, если файла нет - запрашивает создание файла.
-
-        :context_exists: флаг сущестования контекста, тип bool
+        Opens a file for writing or updating.
+        Checks an existence of the context (file *.mget): 
+        if it does not exist (the context is clean) - creates a new file
+        or asks for rewriting existing file.
+        if the context exists - opens the file for updating or if
+        the file does not exist - asks for creating a new file.
 
         """
-        if context_exists: # если контекст существует
+        if self.context.clean: # the context is clean (the first session)
+            if os.path.isfile(self.fullpath): # the file exists
+                if not self.console.ask(self.lang.question.rewrite_file.format(self.fullpath), False): # ask for rewriting
+                    # user answered 'no'
+                    raise CancelError(self.lang.message.cancel) # cancelling download
+            # the file does not exist or user answered 'yes'
             try:
-                return open(self.fullpath, 'rb+') # открываем файл для обновления
+                return open(self.fullpath, 'wb') # open the file for writing (if it exists all data will be lost)
             except:
-                # в случае ошибки
-                if os.path.isfile(self.fullpath): # если файл существует
-                    raise FileError(self.lang.error.unable_open_file.format(self.fullpath, self.lang.error.permission_denied)) # ошибка доступа
-                # если не существует
-                if not self.console.ask(self.lang.question.create_file.format(self.fullpath), True): # запрашиваем создание
-                    # и если пользователь ответил "нет" 
-                    raise CancelError(self.lang.message.cancel) # отмена скачивания
-                self.context.reset() # сбрасываем контекст
-                return self.open_file(False) # и вызываем этот-же метод без контекста
-        else: # если контекста нет         
-            if os.path.isfile(self.fullpath): # если файл существует
-                if not self.console.ask(self.lang.question.rewrite_file.format(self.fullpath), False): # запрашиваем пересоздание
-                    # если пользователь ответил "нет"
-                    raise CancelError(self.lang.message.cancel) # отмена скачивания
-            try:
-                return open(self.fullpath, 'wb') # открываем файл для записи (существующий файл будет перезаписан с нуля)
-            except:
-                # в случае ошибки - невозможно здать файл
+                # can't create the file
                 raise FileError(self.lang.error.unable_create_file.format(self.fullpath, self.lang.error.permission_denied))
+        else: # the context is not clean (it's not a first session)
+            try:
+                return open(self.fullpath, 'rb+') # open file for updating
+            except:
+                # if open failed
+                if os.path.isfile(self.fullpath): # file exists
+                    # permission denied
+                    raise FileError(self.lang.error.unable_open_file.format(self.fullpath, self.lang.error.permission_denied))
+                # file does not exist
+                if not self.console.ask(self.lang.question.create_file.format(self.fullpath), True): # ask for creating
+                    # the user's answer is 'no'
+                    raise CancelError(self.lang.message.cancel) # cancelling download
+                # the answer is 'yes'
+                self.context.reset() # reset the context
+                return self.open_file() # retry open the file without context
 
     def __enter__(self):
 
         """
-        Медод, вызываемый менеджером контекста при входе.
-        Возвращает ссылку на себя, внутри оператора with будут доступны методы seek и write
+        Called by context manager when enter.
+        Returns a link to self, inside 'with' statement
+        methods 'seek' and 'write' are available.
 
         """
         return self 
@@ -119,144 +133,144 @@ class OutputFile:
     def __exit__(self, exception_type, exception_value, traceback):
 
         """
-        Медод, вызываемый менеджером контекста при выходе.
-        Закрывает файл, если он был открыт
+        Called by context manager when exit.
+        Closes the file if it has been opened.
 
         """
         try:
             self.file.close()
         except:
-            return False # сообщаем, что исключение обработано
+            return False # exception has not been catched
 
     def seek(self, offset):
 
         """
-        Медод перемещения указателя в файле. 
+        Moves internal pointer to offset. 
 
-        :offset: позиция, куда нужно переместить указатель, тип int
+        :offset: new position in the file, type int
 
         """
         try:
-            self.file.seek(offset, 0) # перемещаем указатель в файле на offset байт от начала (параметр 0)
+            self.file.seek(offset, 0) # move a pointer to 'offset' bytes from the begiing of the file (second argument 0)
         except:
-            # в случае неудачи - ошибка записи
+            # if it failed - writing error
             raise FileError(self.lang.error.unable_write.format(self.filename))
 
     def write(self, data):
 
         """
-        Медод данных записи в файл. 
+        Writes data into the file. 
 
-        :data: данные, которые будут записаны, тип sequence
+        :data: data to write, type bytes
 
         """
         try:
-            return self.file.write(data) # пишем в файл
+            return self.file.write(data) # write into the file
         except:
-            # в случае неудачи - ошибка записи
+            # it it faised - writing error
             raise FileError(self.lang.error.unable_write.format(self.filename))
 
 
 
-# Класс контекста
+# Context class
 
 class Context:
 
     """
-    Сохраняет в специальный файл и загружает из него в случае
-    прерывания скачивания информацию о прогрессе скачивания,
-    что позволяет продолжить качать с места рассоединения.
+    Saves in the special file information about process
+    of downloading and loads this information after restart.
+    It helps resume downloading after error.
 
-    Формат файла:
+    File format:
 
-    Заголовок:
-        смещение, тип int
-        записанные байты, тип int
-        кол-во неудачных частей, тип int
-    Тело:
-        список неудачных частей, тип int
-    
+    Header:
+        current offset, type int
+        written bytes count, type int
+        failed parts count, type int
+    Body:
+        a list of offsets of failed parts, type int
 
     """
     def __init__(self, filename):
 
         """
-        :filename: имя скачиваемого файла, тип str
+        :filename: the fill name of file to downlaod, type str
 
         """
-        self.filename = filename + '.pymget' # имя файла контекста
-        self.failed_parts = [] # части, которые всё ещё над оскачать
-        self.offset = 0 # текущее смещение
-        self.written_bytes = 0 # количество записанных байт
+        self.filename = filename + '.pymget' # the name of context file
+        self.failed_parts = [] # parts still need to download
+        self.offset = 0 # current offset
+        self.written_bytes = 0 # written bytes count
         try:
-            with open(self.filename, 'rb') as f: # открываем файл контекста
-                data = f.read(struct.calcsize('NNq')) # читаем заголовок
-                # и распаковываем его
+            with open(self.filename, 'rb') as f: # open the context file
+                data = f.read(struct.calcsize('NNq')) # read the header
+                # and unpack it
                 self.offset, self.written_bytes, failed_parts_len = struct.unpack('NNq', data)
-                # если есть неудачные части
+                # if there are failed parts
                 if failed_parts_len > 0:
-                    data = f.read(struct.calcsize('N' * failed_parts_len)) # читаем их
-                    # и распаковываем
+                    data = f.read(struct.calcsize('N' * failed_parts_len)) # read failed parts
+                    # and unpack them
                     self.failed_parts = struct.unpack('N' * failed_parts_len, data)
-        except: # ошибка открытия файла
-            self.exists = False # контекста не существует (прерывания скачивания не было)
-        else: # ошибок не было
-            self.exists = True # контекст существует (ранее скачивание было прервано)
+        except: # open file failed or wrong file format
+            self.clean = True # consider that context does not exist (it's a first session)
+        else: # there are no errors
+            self.clean = False # context exists (resume downloading)
 
     def modified(self, offset, written_bytes, failed_parts):
 
         """
-        Проверяет, изменилось ли состояние процесса скачивания.
+        Check changes in downloading state.
 
-        :offset: текущее смещение, тип int
-        :written_bytes: количество записанных байт, тип int
-        :failed_parts: неудачные части, тип sequence (int)
+        :offset: current offset, type int
+        :written_bytes: written bytes count, type int
+        :failed_parts: offsets of failed parts, type sequence <int>
 
         """
-        # возвращаем True если хоть что-то отличается от контекста
+        # return True if anything differs from the current context
         return self.offset != offset or self.written_bytes != written_bytes or set(self.failed_parts) ^ set(failed_parts)
 
     def update(self, offset, written_bytes, failed_parts):
 
         """
-        Обновляет контекст.
+        Updates the context.
 
-        :offset: текущее смещение, тип int
-        :written_bytes: количество записанных байт, тип int
-        :failed_parts: неудачные части, тип sequence (int)
+        :offset: current offset, type int
+        :written_bytes: written bytes count, type int
+        :failed_parts: offsets of failed parts, type sequence <int>
 
         """
-        # если изменений нет
+        # if nothing changed
         if not self.modified(offset, written_bytes, failed_parts):
-            # просто выходим
+            # do nothing
             return
-        # иначе присваеваем новые значения
+        # if something changed - assign new values
         self.offset = offset
         self.written_bytes = written_bytes
         self.failed_parts = failed_parts
         failed_parts_len = len(self.failed_parts)
-        format = 'NNq' + 'N' * failed_parts_len # определяем формат в зависимости от количества неудачных частей
-        # запаковываем даныне
-        data = struct.pack(format, self.offset, self.written_bytes, failed_parts_len, *self.failed_parts)
-        # пишем в файл
+        pattern = 'NNq' + 'N' * failed_parts_len # create a pattern depending on failed parts count
+        # pack data
+        data = struct.pack(pattern, self.offset, self.written_bytes, failed_parts_len, *self.failed_parts)
+        # save data to the context file
         with open(self.filename, 'wb') as f:
             f.write(data)
 
     def reset(self):
 
         """
-        Обнуляет контекст.
+        Resets the context.
 
         """
         self.update(0, 0, [])
+        self.clean = True
 
     def delete(self):
 
         """
-        Удаляет файл контекста.
+        Deletes the context file.
 
         """
         try:
             os.remove(self.filename)
         except:
-            pass # ошибки просто игнорируем, скорее всего файл не существует
+            pass # just ignore erros, probably file does not exist
