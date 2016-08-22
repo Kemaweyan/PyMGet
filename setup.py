@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from setuptools import setup, find_packages
+from pymget.networking import VERSION
 
 entry_points = {
     "console_scripts": [
@@ -10,7 +11,7 @@ entry_points = {
 
 setup(
     name = "pymget",
-    version = "1.34",
+    version = VERSION,
     fullname = "PyMGet",
     description = "Utility for parallel downloading files from multiple mirrors",
     author = "Taras Gaidukov",
