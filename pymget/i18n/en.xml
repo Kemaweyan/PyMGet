@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<language name="en_US" version="1.0">
+<language name="en_US" version="1.1">
     <common>
         <msg name="error">Error: </msg>
         <msg name="warning">Warning: </msg>
+        <msg name="yes">yes</msg>
+        <msg name="no">no</msg>
     </common>
     <messages>
         <msg name="connected">Connecting to {} OK</msg>
@@ -73,9 +75,9 @@
         <msg name="dir_is_file">wrong path, '{}' is a file.</msg>
     </errors>
     <questions>
-        <msg name="anyway_download">Use the mirror {} anyway? (yes/NO):</msg>
-        <msg name="rewrite_file">File {} already exists. Do you really want to rewrite that? All data will be lost. (yes/NO):</msg>
-        <msg name="create_file">File {} not found. Do you want to start downloading again? (YES/no):</msg>
-        <msg name="create_dir">Directory {} does not exist. Do you want to create that? (YES/no):</msg>
+        <msg name="anyway_download">Use the mirror {} anyway?</msg>
+        <msg name="rewrite_file">File {} already exists. Do you really want to rewrite that? All data will be lost.</msg>
+        <msg name="create_file">File {} not found. Do you want to start downloading again?</msg>
+        <msg name="create_dir">Directory {} does not exist. Do you want to create that?</msg>
     </questions>
 </language>

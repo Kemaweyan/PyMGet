@@ -151,11 +151,21 @@ class Console:
         :default: default answer (it would be applied when user press Enter), type bool
 
         """
-        YES = ['y', 'yes', 'д', 'да'] # answers interpreted as 'yes'
-        NO = ['n', 'no', 'н', 'нет'] # answers interpreted as 'no'
+        YES = ['y', 'yes', self.lang.common.yes, self.lang.common.yes[0]] # answers interpreted as 'yes'
+        NO = ['n', 'no', self.lang.common.no, self.lang.common.no[0]] # answers interpreted as 'no'
+
+        if default: # YES by default
+            yes_text = self.lang.common.yes.upper() # make YES uppercase
+            no_text = self.lang.common.no
+        else: # NO by default
+            yes_text = self.lang.common.yes
+            no_text = self.lang.common.no.upper() # make NO uppercase
+        # add answers to text
+        question_text = '{} ({}/{}):'.format(text, yes_text, no_text)
+
         # Repeate until user typed a valid answer
         while True:
-            self.out(text, end=' ')
+            self.out(question_text, end=' ')
             answer = input().lower()
             if answer in YES:
                 return True

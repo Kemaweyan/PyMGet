@@ -10,7 +10,7 @@ from abc import ABCMeta, abstractmethod, abstractproperty
 from pymget.task_info import *
 from pymget.data_queue import DataQueue
 
-VERSION = '1.34'
+VERSION = '1.35'
 
 class URL:
 

@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<language name="ru_RU" version="1.0">
+<language name="ru_RU" version="1.1">
     <common>
         <msg name="error">Ошибка: </msg>
         <msg name="warning">Внимание: </msg>
+        <msg name="yes">да</msg>
+        <msg name="no">нет</msg>
     </common>
     <messages>
         <msg name="connected">Соединение с сервером {} OK</msg>
@@ -58,7 +60,7 @@
         <msg name="unable_connect">не удалось соединиться с сервером {}</msg>
         <msg name="no_partial">сервер {} не поддерживает скачивание по частям.</msg>
         <msg name="wrong_http_code">неверный ответ сервера. Код {}</msg>
-        <msg name="wrong_filesize">размер файла на сервере {} {} байт отличается\nот полученного ранее {} байт.</msg>
+        <msg name="wrong_filesize">размер файла на сервере {} {} байт отличается от полученного ранее {} байт.</msg>
         <msg name="unable_download">невозможно скачать файл.</msg>
         <msg name="wrong_argument">неверный аргумент командной строки. </msg>
         <msg name="arg_needs_param">аргумент '{}' требует указания параметра.</msg>
@@ -75,9 +77,9 @@
         <msg name="dir_is_file">неверный путь, '{}' является файлом.</msg>
     </errors>
     <questions>
-        <msg name="anyway_download">Всё равно использовать зеркало {}? (да/НЕТ):</msg>
-        <msg name="rewrite_file">Файл {} уже существует. Вы действительно хотите перезаписать файл? Все данные будут утеряны. (да/НЕТ):</msg>
-        <msg name="create_file">Файл {} не найден. Начать скачивание заново? (ДА/нет):</msg>
-        <msg name="create_dir">Папки {} не существует. Создать папку? (ДА/нет):</msg>
+        <msg name="anyway_download">Всё равно использовать зеркало {}?</msg>
+        <msg name="rewrite_file">Файл {} уже существует. Вы действительно хотите перезаписать файл? Все данные будут утеряны.</msg>
+        <msg name="create_file">Файл {} не найден. Начать скачивание заново?</msg>
+        <msg name="create_dir">Папки {} не существует. Создать папку?</msg>
     </questions>
 </language>
