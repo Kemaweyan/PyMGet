@@ -4,9 +4,9 @@
 def singleton(cls):
 
     """
-    Функция-декоратор синглетон. Объекты декорированных таким образом классов
-    будут существовать в единственном экземпляре. Попытка создания новых экземпляров
-    будет возвращать ссылку на уже существующий объект. Использование:
+    Decorator function singleton. There could be only single instance of objects
+    created from classes decorated with this decorator. Attempts to create new
+    instances return a link to that single object. Usage:
 
     @singleton
     class ...
@@ -25,10 +25,11 @@ def singleton(cls):
 def calc_units(size):
 
     """
-    Переводит байты в кратные единицы (КБ, МБ, ГБ, ТБ) с 2 десятичными знаками.
+    Translate bytes to other units (kB, MB, GB, TB) with 2 digits
+    after floating point.
 
-    :size: величина в байтах, тип int
-    :return: строка, состоящая из величины и единиц измерения, тип str
+    :size: bytes count, type int
+    :return: a string with a value in calculated units, type str
 
     """
     if size >= 2**40:
