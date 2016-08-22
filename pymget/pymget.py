@@ -10,26 +10,29 @@ from pymget.manager import Manager
 from pymget.networking import VERSION
 from pymget.command_line import CommandLine
 
-# выполняется при запуске сценария как самостоятельной программы
-
 def start():
 
+    """
+    The main entry point.
+
+    """
     try:
-        Messages()
+        Messages() # create the Message object to load string constants
     except Exception as e:
+        # if failed - print an error message and exit
         print(str(e))
         sys.exit()
 
-    console = Console() # создадим объект консоли
-    console.out('\nPyMGet v{}\n'.format(VERSION)) # выведем информацию о себе
+    console = Console() # create the Console object
+    console.out('\nPyMGet v{}\n'.format(VERSION)) # print an information about program
 
     try:
         cl = CommandLine(sys.argv)
-        cl.parse() # парсим командную строку
-        manager = Manager(cl.urls, cl.block_size, cl.filename, cl.timeout) # создаём менеджер
-        manager.download() # запускаем скачивание
-    except CancelError as e: # если пользователь отменил скачивание
+        cl.parse() # parse command line
+        manager = Manager(cl.urls, cl.block_size, cl.filename, cl.timeout) # create the Manager object
+        manager.download() # start downloading
+    except CancelError as e: # user cancelled downloading
         console.out(str(e))
-    except Exception as e: # любая другая ошибка
+    except Exception as e: # other errors
         console.error(str(e))
     
