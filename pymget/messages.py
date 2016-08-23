@@ -176,11 +176,16 @@ class Messages:
         if not default:
             raise FatalError('Default language not found')
 
-        sys_locale = locale.getlocale() # get system locale
-        # get language name from a tuple that contains
-        # a language name and encoding. Format of first element
-        # of the tuple is aa_BB but we need the first part of it only.
-        lang = sys_locale[0].split('_')[0]
+        try:
+            sys_locale = locale.getdefaultlocale() # get system locale
+            # get language name from a tuple that contains
+            # a language name and encoding. Format of first element
+            # of the tuple is aa_BB but we need the first part of it only.
+            lang = sys_locale[0].split('_')[0]
+        except:
+            # if an error has occured - use default language
+            lang = self.default_lang
+
         # system localisation differs with default language
         if lang != self.default_lang:
             system = self.load_lang(lang) # then load system language
