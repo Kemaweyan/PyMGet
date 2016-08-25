@@ -107,6 +107,18 @@ class Mirror(metaclass=ABCMeta):
         self.dnl_thread = self.download_thread(self.url, self.conn, offset, self.block_size)
         self.dnl_thread.start()
 
+    def cancel(self):
+
+        """
+        Canceles operations of the mirror.
+        It sets a cancel flag in running threads. 
+
+        """
+        if self.conn_thread:
+            self.conn_thread.cancel()
+        if self.dnl_thread:
+            self.dnl_thread.cancel()
+
     def done(self):
 
         """

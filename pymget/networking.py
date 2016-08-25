@@ -10,7 +10,7 @@ from abc import ABCMeta, abstractmethod, abstractproperty
 from pymget.task_info import *
 from pymget.data_queue import DataQueue
 
-VERSION = '1.36'
+VERSION = '1.37'
 
 class URL:
 
@@ -56,6 +56,17 @@ class NetworkThread(threading.Thread, metaclass=ABCMeta):
         threading.Thread.__init__(self)
         self.data_queue = DataQueue()
         self.ready = threading.Event() # a flag that the thread is completed
+        self.cancelled = threading.Event() # a flag that the thread has been cancelled
+
+    def cancel(self):
+
+        """
+        Sets the cancel flag.
+        The thread will be terminated when
+        it checks this flag and that is setted.
+
+        """
+        self.cancelled.set()
 
     @abstractmethod
     def run(self): pass # runs in separate thread, should be implemented in inherited classes
@@ -271,6 +282,10 @@ class HTTXDownloadThread(DownloadThread):
             data = b'' # data buffer
             # loop while all data will be received
             while part_size > len(data):
+                if self.cancelled.is_set(): # if the thread has been cancelled
+                    # stop the thread, the TaskError would not be processed
+                    # because a loop in the main thread already broken
+                    raise Exception
                 data_fragment = response.read(self.FRAGMENT_SIZE)
                 data += data_fragment # add data to the buffer
                 # put progress information into the queue
@@ -317,6 +332,10 @@ class FTPDownloadThread(DownloadThread):
             # loop while received data size is less than block size
             # however the last block could be lesser than that size
             while len(data) < self.block_size:
+                if self.cancelled.is_set(): # if the thread has been cancelled
+                    # stop the thread, the TaskError would not be processed
+                    # because a loop in the main thread already broken
+                    raise Exception
                 # get data, but not more than fragment size
                 # and the size remaining to full block
                 data_fragment = sock.recv(min(self.block_size - len(data), self.FRAGMENT_SIZE))
