@@ -6,7 +6,7 @@ import os, queue
 from collections import deque
 
 from pymget.messages import Messages
-from pymget.errors import FatalError, URLError, FileSizeError
+from pymget.errors import FatalError, URLError, FileSizeError, CancelError
 from pymget.console import Console
 from pymget.outfile import OutputFile
 from pymget.utils import calc_units
@@ -130,28 +130,35 @@ class Manager:
 
         """
         with self.outfile: # open output file
-            while self.file_size == 0 or self.written_bytes < self.file_size: # downloading is not complete
-                self.wait_connections() # wait mirrors (connections, giving tasks)
-                while True:
-                    try:
-                        # check the queue, if it's empty - an exception is raised
-                        task_info = self.data_queue.get(False, 0.01)
+            try:
+                while self.file_size == 0 or self.written_bytes < self.file_size: # downloading is not complete
+                    self.wait_connections() # wait mirrors (connections, giving tasks)
+                    while True:
                         try:
-                            # process given result from the mirror
-                            task_info.process(self)
-                        finally:
-                            needle_parts = self.parts_in_progress.copy() # save non-completed parts
-                            needle_parts.extend(self.failed_parts) # add failed parts
-                            self.context.update(self.offset, self.written_bytes, needle_parts) # save the context
-                    except queue.Empty: # if the queue is empty
-                        # it meats that there is nothing to do
-                        # and we need to wait mirrors or give a new task
-                        break # quit the loop (go to waiting mirrors)
-        # loop for shut down the program
-        for mirror in self.mirrors.values():
-            mirror.join() # wait threads
-            mirror.close() # close connection
-        self.console.out() # print empty string to console
+                            # check the queue, if it's empty - an exception is raised
+                            task_info = self.data_queue.get(False, 0.01)
+                            try:
+                                # process given result from the mirror
+                                task_info.process(self)
+                            finally:
+                                needle_parts = self.parts_in_progress.copy() # save non-completed parts
+                                needle_parts.extend(self.failed_parts) # add failed parts
+                                self.context.update(self.offset, self.written_bytes, needle_parts) # save the context
+                        except queue.Empty: # if the queue is empty
+                            # it meats that there is nothing to do
+                            # and we need to wait mirrors or give a new task
+                            break # quit the loop (go to waiting mirrors)
+            except KeyboardInterrupt: # user interrupted process
+                # cancel all active threads
+                for mirror in self.mirrors.values():
+                    mirror.cancel()
+                raise CancelError(self.lang.message.cancel)
+            finally:
+                # loop for shut down the program
+                for mirror in self.mirrors.values():
+                    mirror.join() # wait threads
+                    mirror.close() # close connection
+                self.console.out() # print empty string to console
         self.context.delete() # remove the context file
 
     def del_active_part(self, offset):
