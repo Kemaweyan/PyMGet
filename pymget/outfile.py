@@ -31,15 +31,21 @@ class OutputFile:
         """
         self.lang = Messages()
         self.console = Console()
-        if not path: # user has not specified the path
+        if not path: # user has not specified a path
             self.filename = filename # use filename from the server
             self.path = '' # path is empty (write into current directory)
             self.fullpath = filename # use just filename as a fullpath
-        elif os.path.isdir(path): # user specified the path to a folder
+        elif os.path.isdir(path): # user specified a path to existing folder
             self.filename = filename # use filename from the server
-            self.path = path # use specified path
+            self.path = path.rstrip(os.sep) # use specified path without last separator
             # fullpath is a combination of path and filename
-            self.fullpath = path.rstrip(os.sep) + os.sep + filename
+            self.fullpath = self.path + os.sep + filename
+        elif path.endswith(os.sep): # user specified a path to non-existing folder
+            self.filename = filename # use filename from the server
+            self.path = path.rstrip(os.sep) # use specified path without last separator
+            # fullpath is a combination of path and filename
+            self.fullpath = path + filename # path already ends with directory separator
+            self.check_folders() # check all folders in the path for existence
         else: # the specified path is not a folder
             self.filename = os.path.basename(path) # extract filename from the path
             self.path = os.path.dirname(path) # extract path to directory too 
