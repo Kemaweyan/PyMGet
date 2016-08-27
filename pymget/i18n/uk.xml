@@ -5,6 +5,11 @@
         <msg name="warning">Увага: </msg>
         <msg name="yes">так</msg>
         <msg name="no">ні</msg>
+        <msg name="week">т</msg>
+        <msg name="day">д</msg>
+        <msg name="hour">г</msg>
+        <msg name="minute">х</msg>
+        <msg name="second">с</msg>
     </common>
     <messages>
         <msg name="connected">З'єднання із {} OK</msg>

@@ -14,13 +14,12 @@ class ProgressBar:
     To change a progress use 'update' method
 
     """
-    WIDTH = 57 # the width of progressbar, the number is 80 - [everything else]
+    WIDTH = 46 # the width of progressbar is 79 - [everything else]
 
     def __init__(self):
         self._total = 0
         self.time = 0
-        if platform.system() == 'Windows':
-            self.WIDTH -= 1 # in Windows it should be 79 - [everything else]
+        self.lang = Messages()
 
     @property
     def total(self):
@@ -46,19 +45,42 @@ class ProgressBar:
             speed = gotten_bytes / (time.time() - self.time)
             percent = complete / self.total
             progress = round(self.WIDTH * percent)
+            eta = round((self.total - complete) / speed)
         except:
             speed = 0
             percent = 0
             progress = 0
+            eta = 0
 
         # progressbar format:
-        # [progress string] |progress in percents| |download speed|
-        #   WIDTH symbols        7 symbols            12 symbols
+        # [progress string] |progress in percents| |download speed| |estimated time of arrival|
+        #   WIDTH symbols        7 symbols            12 symbols            9 symbols
 
-        bar = '[{0:-<{1}}] {2:>7.2%} {3:>10}/s\r'.format('#'*progress, self.WIDTH, percent, calc_units(speed))
+        bar = '[{0:-<{1}}] {2:>7.2%} {3:>10}/s {4:>9}\r'.format('#'*progress, self.WIDTH, percent, calc_units(speed), self.calc_eta(eta))
 
         sys.stdout.write(bar)
         sys.stdout.flush()
+
+    def calc_eta(self, eta):
+
+        """
+        Calculates estimated time of arrival
+        in weeks, days, hours, minutes or seconds.
+
+        :eta: ETA in seconds, type int
+
+        """
+        if not eta or eta > 3600 * 24 * 7 * 99:
+            return ' ETA: ---'
+        if eta > 3600 * 24 * 7: # more than a week
+            return ' ETA: {:>2}{}'.format(round(eta / 3600 * 24 * 7), self.lang.common.week)
+        if eta > 3600 * 24: # more than a day
+            return ' ETA: {:>2}{}'.format(round(eta / 3600 * 24), self.lang.common.day)
+        if eta > 3600: # more than a hour
+            return ' ETA: {:>2}{}'.format(round(eta / 3600), self.lang.common.hour)
+        if eta > 60: # more than a minute
+            return ' ETA: {:>2}{}'.format(round(eta / 60), self.lang.common.minute)
+        return ' ETA: {:>2}{}'.format(eta, self.lang.common.second)
 
 
 

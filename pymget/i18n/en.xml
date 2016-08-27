@@ -1,10 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<language name="en_US" version="1.1">
+<language name="en_US" version="1.2">
     <common>
         <msg name="error">Error: </msg>
         <msg name="warning">Warning: </msg>
         <msg name="yes">yes</msg>
         <msg name="no">no</msg>
+        <msg name="week">w</msg>
+        <msg name="day">d</msg>
+        <msg name="hour">h</msg>
+        <msg name="minute">m</msg>
+        <msg name="second">s</msg>
     </common>
     <messages>
         <msg name="connected">Connecting to {} OK</msg>

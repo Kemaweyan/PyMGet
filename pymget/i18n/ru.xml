@@ -1,10 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<language name="ru_RU" version="1.1">
+<language name="ru_RU" version="1.2">
     <common>
         <msg name="error">Ошибка: </msg>
         <msg name="warning">Внимание: </msg>
         <msg name="yes">да</msg>
         <msg name="no">нет</msg>
+        <msg name="week">н</msg>
+        <msg name="day">д</msg>
+        <msg name="hour">ч</msg>
+        <msg name="minute">м</msg>
+        <msg name="second">с</msg>
     </common>
     <messages>
         <msg name="connected">Соединение с сервером {} OK</msg>
