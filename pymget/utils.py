@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import pymget.messages
+
 def singleton(cls):
 
     """
@@ -21,8 +23,7 @@ def singleton(cls):
 
 
 
-
-def calc_units(size):
+def calc_size(size):
 
     """
     Translate bytes to other units (kB, MB, GB, TB) with 2 digits
@@ -33,11 +34,34 @@ def calc_units(size):
 
     """
     if size >= 2**40:
-        return '{:.2f}TiB'.format(size / 2**40)
+        return '{:.2f}{}'.format(size / 2**40, _("TiB"))
     if size >= 2**30:
-        return '{:.2f}GiB'.format(size / 2**30)
+        return '{:.2f}{}'.format(size / 2**30, _("GiB"))
     if size >= 2**20:
-        return '{:.2f}MiB'.format(size / 2**20)
+        return '{:.2f}{}'.format(size / 2**20, _("MiB"))
     if size >= 2**10:
-        return '{:.2f}KiB'.format(size / 2**10)
-    return '{}B'.format(size)
+        return '{:.2f}{}'.format(size / 2**10, _("KiB"))
+    return '{}{}'.format(size, _("B"))
+
+
+
+def calc_eta(eta):
+
+    """
+    Calculates estimated time of arrival
+    in weeks, days, hours, minutes or seconds.
+
+    :eta: ETA in seconds, type int
+
+    """
+    if not eta or eta > 3600 * 24 * 7 * 99:
+        return ' ETA: ---'
+    if eta > 3600 * 24 * 7: # more than a week
+        return ' ETA: {:>2}{}'.format(round(eta / 3600 / 24 / 7), _('w'))
+    if eta > 3600 * 24: # more than a day
+        return ' ETA: {:>2}{}'.format(round(eta / 3600 / 24), _('d'))
+    if eta > 3600: # more than a hour
+        return ' ETA: {:>2}{}'.format(round(eta / 3600), _('h'))
+    if eta > 60: # more than a minute
+        return ' ETA: {:>2}{}'.format(round(eta / 60), _('m'))
+    return ' ETA: {:>2}{}'.format(eta, _('s'))

@@ -3,12 +3,61 @@
 
 import sys
 
-from pymget.messages import Messages
 from pymget.errors import CancelError
 from pymget.console import Console
 from pymget.manager import Manager
 from pymget.networking import VERSION
 from pymget.command_line import CommandLine
+from pymget.outfile import OutputFile
+
+class PyMGet:
+
+    """
+    A PyMGet application class.
+
+    """
+    def __init__(self, argv):
+        self.argv = argv
+        self.manager = self._manager() # create a manager object
+        self.console = self._console() # create the Console object
+        self.console.message('\nPyMGet v{}\n'.format(VERSION)) # print an information about program
+
+    def run(self):
+
+        """
+        Runs an application.
+
+        """
+        try:
+            self.cl = self._command_line(self.console, self.argv)
+            self.cl.parse() # parse command line
+            self.outfile = self._outfile(self.console, self.cl.filename) # create an outfile object
+            self.manager.prepare(self.console, self.cl, self.outfile) # prepare the manager object
+            self.manager.download() # start downloading
+        except CancelError as e: # user cancelled downloading
+            self.console.message(str(e))
+        except Exception as e: # other errors
+            self.console.error(str(e))
+        except: # never rich this place
+            pass
+
+    @property
+    def _console(self):
+        return Console
+
+    @property
+    def _command_line(self):
+        return CommandLine
+
+    @property
+    def _outfile(self):
+        return OutputFile
+
+    @property
+    def _manager(self):
+        return Manager
+
+
 
 def start():
 
@@ -16,23 +65,5 @@ def start():
     The main entry point.
 
     """
-    try:
-        Messages() # create the Message object to load string constants
-    except Exception as e:
-        # if failed - print an error message and exit
-        print(str(e))
-        sys.exit()
-
-    console = Console() # create the Console object
-    console.out('\nPyMGet v{}\n'.format(VERSION)) # print an information about program
-
-    try:
-        cl = CommandLine(sys.argv)
-        cl.parse() # parse command line
-        manager = Manager(cl.urls, cl.block_size, cl.filename, cl.timeout) # create the Manager object
-        manager.download() # start downloading
-    except CancelError as e: # user cancelled downloading
-        console.out(str(e))
-    except Exception as e: # other errors
-        console.error(str(e))
-    
+    app = PyMGet(sys.argv)
+    app.run()

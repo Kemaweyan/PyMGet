@@ -3,10 +3,17 @@
 
 from abc import ABCMeta, abstractmethod
 
-from pymget.console import Console
-from pymget.errors import FileSizeError
+class ITaskInfo(metaclass=ABCMeta):
 
-class TaskInfo(metaclass=ABCMeta):
+    """
+    An interface for task info objects.
+
+    """
+    @abstractmethod
+    def process(self, manager): pass
+
+
+class TaskInfo(ITaskInfo):
 
     """
     Abstract base class for object with a result of task performance.
@@ -20,12 +27,8 @@ class TaskInfo(metaclass=ABCMeta):
         :status: status of performance, type int
 
         """
-        self.console = Console()
         self.name = name
         self.status = status
-
-    @abstractmethod
-    def process(self, manager): pass # should be implemented in subclasses
 
 class TaskHeadData(TaskInfo):
 
@@ -50,11 +53,7 @@ class TaskHeadData(TaskInfo):
         Executes when connection to server succed.
 
         """
-        try:
-            manager.set_file_size(self) # tell file size to the Manager
-        except FileSizeError: # file size differs
-            self.console.error(filesize_error.format(self.name, self.file_size, manager.file_size))
-            manager.delete_mirror(self.name) # delete the mirror
+        manager.set_file_size(self) # tell file size to the Manager
 
 class TaskRedirect(TaskInfo):
 
@@ -143,7 +142,7 @@ class TaskError(TaskHeadError):
         Executes when a download error has occurred.
 
         """
-        manager.add_failed_parts(self.offset) # add the task to failed
+        manager.add_failed_part(self.offset) # add the task to failed
         TaskHeadError.process(self, manager) # process an
 
 class TaskData(TaskError):

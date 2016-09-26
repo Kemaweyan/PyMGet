@@ -3,13 +3,23 @@
 
 import sys, os
 import re, textwrap
+from abc import ABCMeta, abstractmethod
 
+import pymget.messages
 from pymget.networking import URL
-from pymget.console import Console
-from pymget.messages import Messages
 from pymget.errors import CommandLineError
 
-class CommandLine:
+class ICommandLine(metaclass=ABCMeta):
+
+    """
+    An interface for CommandLine.
+
+    """
+    @abstractmethod
+    def parse(self): pass
+
+
+class CommandLine(ICommandLine):
 
     """
     Reads arguments in the command line and
@@ -20,21 +30,21 @@ class CommandLine:
     'block_size', 'timeout', 'filename' and 'urls'
 
     """
-    def __init__(self, argv):
+    def __init__(self, console, argv):
 
         """
+        :console: a console object
         :argv: a sequence of argument, elements type str
 
         """
-        self.lang = Messages()
+        self.console = console
         self.argv = argv[1:] # the first argument is a name of program, skip it
         self.block_size = 4 * 2**20 # default block size is 4MB
         self.filename = '' # filename is unknown
         self.timeout = 10 # default timeout is 10 seconds
         self.urls = [] # the list of mirros is empty
         # pattern to search URLs
-        self.url_re = re.compile('^(?:https?|ftp)://(?:[\w\.-]+(?::\d+)?)/')
-        self.console = Console()
+        self.url_re = re.compile('^(?:https?|ftp)://(?:[\d\w\.-]+(?::\d+)?)/?')
 
     def show_help(self):
 
@@ -43,8 +53,44 @@ class CommandLine:
 
         """
         import __main__
+        help_text = _("""
+                    The program is designed for parallel download files from multiple mirrors.
+                    Supported protocols: HTTP, HTTPS, FTP. 
+                    
+                    Usage:
+
+                     {} [ARGUMENTS...] LINKS...
+
+                    Arguments:
+
+                     -h                             Show this help.
+                     --help
+
+                     -v                             Show version.
+                     --version
+
+                     -b block_size                  Specify the size of data block received from 
+                                                    mirrors in each task. Default value is 4MB. 
+                     --block-size=block_size        Value could be in bytes, kilobytes or megabytes.
+                                                    To specify units add symbol K or M.
+
+                     -T timeout                     Specify timeout for mirror response in seconds.
+                     --timeout=timeout              Default value is 10 seconds.
+
+                     -o filename                    Specify a name of the file data will be saved
+                     --out-file=filename            to. By default the filename on the server is
+                                                    used. If it's impossible to detect the filename,
+                                                    'out' will be used.
+
+                     -u filename                    Specify the file with links on each line.
+                     --urls-file=filename           Links from this file will be added to links from
+                                                    command line.
+
+                    Links should start with protocol http://, https:// or ftp:// and should be
+                    splitted with space. If there is argument specifing a file with links in command
+                    line, then you may omit links in the command line.""")
         # use __main__ module to define real program name 
-        self.console.out(textwrap.dedent(self.lang.message.help.format(os.path.basename(__main__.__file__))))
+        self.console.message(textwrap.dedent(help_text.format(os.path.basename(__main__.__file__))))
         sys.exit()
 
     def parse_block_size(self, block_size):
@@ -55,10 +101,10 @@ class CommandLine:
         :block_size: value of argument, type str
 
         """
-        bs_re = re.compile('(\d+)(\w)?') # pattern for argument "number + (optional) "char"
+        bs_re = re.compile('^(\d+)(\w)?$') # pattern for argument "number + (optional) "char"
         matches = bs_re.match(block_size)
         if not matches: # argument does not mutch - wrong argument
-            raise CommandLineError(self.lang.error.wrong_argument + self.lang.error.wrong_param.format('block size', block_size))
+            raise CommandLineError(_("wrong argument in the command line. Wrong parameter format of argument '{}': {}").format('block size', block_size))
         self.block_size = int(matches.group(1)) # assign to block size a value of number
         if matches.group(2): # there is a char in the parameter
             if matches.group(2) in 'kK': # k or K
@@ -67,7 +113,7 @@ class CommandLine:
                 self.block_size *= 2**20 # that's megabytes
             else:
                 # not m, M, k or K - wrong argument
-                raise CommandLineError(self.lang.error.wrong_argument + self.lang.error.wrong_param.format('block size', block_size))
+                raise CommandLineError(_("wrong argument in the command line. Wrong parameter format of argument '{}': {}").format('block size', block_size))
 
     def parse_timeout(self, timeout):
 
@@ -77,9 +123,11 @@ class CommandLine:
         :timeout: value of argument, type str
 
         """
-        if not timeout.isdigit(): # parameter is not a number - wrong argument
-            raise CommandLineError(self.lang.error.wrong_argument + self.lang.error.wrong_param.format('timeout', timeout))
-        self.timeout = int(timeout) # assign timeout
+        try:
+            self.timeout = int(timeout) # assign timeout
+        except:
+            # parameter is not a number - wrong argument
+            raise CommandLineError(_("wrong argument in the command line. Wrong parameter format of argument '{}': {}").format('timeout', timeout))
 
     def parse_urls_file(self, urls_file):
 
@@ -97,11 +145,11 @@ class CommandLine:
                     urls.append(link.strip('\r\n'))
             self.urls.extend(urls) # add these URLs to the list of URLs from command line
         except FileNotFoundError:
-            raise CommandLineError(self.lang.error.file_not_found.format(urls_file))
+            raise CommandLineError(_("file '{}' not found.").format(urls_file))
         except PermissionError:
-            raise CommandLineError(self.lang.error.links_permission_denied.format(urls_file))
+            raise CommandLineError(_("unable to read links file '{}'. Permission denied.").format(urls_file))
         except UnicodeDecodeError: # specified file is not a correct text file
-            raise CommandLineError(self.lang.error.corrupted_file.format(urls_file))
+            raise CommandLineError(_("unable to read links file '{}'. File is broken.").format(urls_file))
      
     def parse_out_file(self, filename):
 
@@ -166,7 +214,7 @@ class CommandLine:
             else:
                 # argument does not match anything known
                 # show warning and skip the argument
-                self.console.warning(self.lang.warning.unknown_arg.format(arg))
+                self.console.warning(_("unknown argument: '{}'").format(arg))
 
         # create URL objects from the links,
         # previously filter them with the URL pattern

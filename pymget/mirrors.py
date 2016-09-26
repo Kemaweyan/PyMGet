@@ -1,13 +1,44 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from abc import ABCMeta, abstractproperty
+from abc import ABCMeta, abstractproperty, abstractmethod
 
-from pymget.console import *
-from pymget.messages import Messages
+import pymget.messages
 from pymget.networking import *
 
-class Mirror(metaclass=ABCMeta):
+class IMirror(metaclass=ABCMeta):
+
+    """
+    An interface for Mirrors.
+
+    """
+    @abstractmethod
+    def connect(self): pass
+
+    @abstractmethod
+    def download(self, offset): pass
+
+    @abstractmethod
+    def wait_connection(self): pass
+
+    @abstractmethod
+    def cancel(self): pass
+
+    @abstractmethod
+    def join(self): pass
+
+    @abstractmethod
+    def done(self): pass
+
+    @abstractmethod
+    def connect_message(self, console): pass
+
+    @abstractmethod
+    def close(self): pass
+
+
+
+class Mirror(IMirror):
 
     """
     Abstract base class for mirrors
@@ -40,8 +71,6 @@ class Mirror(metaclass=ABCMeta):
         :timeout: timeout in seconds, type int
 
         """
-        self.lang = Messages()
-        self.console = Console()
         self.url = url
         self.block_size = block_size
         self.timeout = timeout
@@ -128,13 +157,13 @@ class Mirror(metaclass=ABCMeta):
         self.task_progress = 0 # task is done, clear progress
         self.ready = True # the mirror is ready to get the next task
 
-    def connect_message(self):
+    def connect_message(self, console):
 
         """
         Prints connection message.
 
         """
-        self.console.out(self.lang.message.connected.format(self.url.host))
+        console.message(_("Connecting to {} OK").format(self.url.host))
 
     def join(self):
 
@@ -289,7 +318,7 @@ class FTPMirror(Mirror):
         self.dnl_thread = self.download_thread(self.url, self.conn, offset, self.block_size, self.file_size)
         self.dnl_thread.start()
 
-    def connect_message(self):
+    def connect_message(self, console):
 
         """
         Prints connection message.
@@ -298,4 +327,4 @@ class FTPMirror(Mirror):
         if self.connected: # if it's alredy shown - do nothing
             return
         self.connected = True # set the flag that the message already shown
-        Mirror.connect_message(self) # show the message
+        Mirror.connect_message(self, console) # show the message

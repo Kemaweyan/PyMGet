@@ -10,7 +10,7 @@ from abc import ABCMeta, abstractmethod, abstractproperty
 from pymget.task_info import *
 from pymget.data_queue import DataQueue
 
-VERSION = '1.39'
+VERSION = '1.40'
 
 class URL:
 
@@ -18,7 +18,7 @@ class URL:
     Parses url string. Supported protocols: HTTP/HTTPS/FTP
 
     """
-    url_re = re.compile('^(https?|ftp)://([\w\.-]+(?::\d+)?)((?:/(.+?))?/([^\/]+)?)?$', re.I)
+    url_re = re.compile('^(https?|ftp)://([\d\w\.-]+(?::\d+)?)((?:/(.+?))?/([^\/]+)?)?$', re.I)
 
     def __init__(self, url):
 
@@ -31,19 +31,33 @@ class URL:
         # protocol (1), host with port if present (2), path to the file (4), filename (5)
         # path + filename also are united to request (3)
         matches = self.url_re.match(url)
-        # the url string does not mutch to pattern - error
-        if not matches:
-            raise URLError(url)
         self.protocol = matches.group(1).lower() # http, https or ftp
         self.host = matches.group(2) # hostname or ip address in format host or host:port
-        self.request = matches.group(3) # the request beginning with /
-        self.path = matches.group(4) # path to the file without beginning /
-        self.filename = matches.group(5) # filename
+        self.request = matches.group(3) if matches.group(3) else '/' # the request beginning with /
+        self.path = matches.group(4) if matches.group(4) else '' # path to the file without beginning /
+        self.filename = matches.group(5) if matches.group(5) else '' # filename
 
 
 
 
-class NetworkThread(threading.Thread, metaclass=ABCMeta):
+class INetworkThread(metaclass=ABCMeta):
+
+    """
+    An interface for network threads.
+
+    """
+    @abstractmethod
+    def start(self): pass
+
+    @abstractmethod
+    def join(self): pass
+
+    @abstractmethod
+    def cancel(self): pass
+
+
+
+class NetworkThread(threading.Thread, INetworkThread):
 
     """
     Abstract base class for network threads.
@@ -54,7 +68,7 @@ class NetworkThread(threading.Thread, metaclass=ABCMeta):
 
     def __init__(self):
         threading.Thread.__init__(self)
-        self.data_queue = DataQueue()
+        self.data_queue = self._dataqueue()
         self.ready = threading.Event() # a flag that the thread is completed
         self.cancelled = threading.Event() # a flag that the thread has been cancelled
 
@@ -67,6 +81,10 @@ class NetworkThread(threading.Thread, metaclass=ABCMeta):
 
         """
         self.cancelled.set()
+
+    @property
+    def _dataqueue(self):
+        return DataQueue
 
     @abstractmethod
     def run(self): pass # runs in separate thread, should be implemented in inherited classes
@@ -113,6 +131,10 @@ class ConnectionThread(NetworkThread):
     @abstractmethod
     def connect(self): pass # make connection, should be implemented in subclasses. Should return a TaskInfo object
 
+    # abstract property, subclasses should implement it and return class for connection
+    @abstractproperty
+    def protocol(self): pass
+
 class HTTXThread(ConnectionThread):
 
     """
@@ -138,8 +160,6 @@ class HTTXThread(ConnectionThread):
         # 3) beginning / if it presents (as a flag)
         redirect_re = re.compile('^(https?://[^/]+)?((/)?(?:.*))$', re.I)
         matches = redirect_re.match(location)
-        if not matches:
-            return TaskHeadError(self.url.host, status)
         if matches.group(1): # if there is a host in the location
             url = location # the path is absolute, redirect there
         elif matches.group(3): # there is beginning /
@@ -181,10 +201,6 @@ class HTTXThread(ConnectionThread):
         response.close()
         return info
 
-    # abstract property, subclasses should implement it and return class for connection
-    @abstractproperty
-    def protocol(self): pass
-
 class HTTPThread(HTTXThread):
 
     """
@@ -219,12 +235,16 @@ class FTPThread(ConnectionThread):
         directory to directory with requested file and gets its size.
 
         """
-        self.conn = ftplib.FTP(self.url.host, 'anonymous', '', timeout=self.timeout)
+        self.conn = self.protocol(self.url.host, 'anonymous', '', timeout=self.timeout)
         self.conn.voidcmd('TYPE I')
         self.conn.cwd(self.url.path)
         self.conn.voidcmd('PASV')
         file_size = self.conn.size(self.url.filename)
         return TaskHeadData(self.url.host, 200, file_size) # set the code 200 for compatibility with HTTP
+
+    @property
+    def protocol(self):
+        return ftplib.FTP
 
 
 

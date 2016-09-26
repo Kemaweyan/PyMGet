@@ -2,11 +2,24 @@
 # -*- coding: utf-8 -*-
 
 import queue
+from abc import ABCMeta, abstractmethod
 
 from pymget.utils import singleton
 
+class IDataQueue:
+    """
+    An interface for DataQueue.
+
+    """
+    @abstractmethod
+    def put(self, obj): pass
+
+    @abstractmethod
+    def get(self, block=False, timeout=0): pass
+
+
 @singleton
-class DataQueue(queue.Queue):
+class DataQueue(queue.Queue, IDataQueue):
 
     """
     Queue of TaskInfo objects produced

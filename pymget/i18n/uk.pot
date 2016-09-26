@@ -1,0 +1,260 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR ORGANIZATION
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: PACKAGE VERSION\n"
+"POT-Creation-Date: 2016-09-14 17:42+EEST\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: pygettext.py 1.5\n"
+
+#: pymget/command_line.py:45
+msgid ""
+"\n"
+"                    The program is designed for parallel download files from multiple mirrors.\n"
+"                    Supported protocols: HTTP, HTTPS, FTP. \n"
+"                    \n"
+"                    Usage:\n"
+"\n"
+"                     {} [ARGUMENTS...] LINKS...\n"
+"\n"
+"                    Arguments:\n"
+"\n"
+"                     -h                             Show this help.\n"
+"                     --help\n"
+"\n"
+"                     -v                             Show version.\n"
+"                     --version\n"
+"\n"
+"                     -b block_size                  Specify the size of data block received from \n"
+"                                                    mirrors in each task. Default value is 4MB. \n"
+"                     --block-size=block_size        Value could be in bytes, kilobytes or megabytes.\n"
+"                                                    To specify units add symbol K or M.\n"
+"\n"
+"                     -T timeout                     Specify timeout for mirror response in seconds.\n"
+"                     --timeout=timeout              Default value is 10 seconds.\n"
+"\n"
+"                     -o filename                    Specify a name of the file data will be saved\n"
+"                     --out-file=filename            to. By default the filename on the server is\n"
+"                                                    used. If it's impossible to detect the filename,\n"
+"                                                    'out' will be used.\n"
+"\n"
+"                     -u filename                    Specify the file with links on each line.\n"
+"                     --urls-file=filename           Links from this file will be added to links from\n"
+"                                                    command line.\n"
+"\n"
+"                    Links should start with protocol http://, https:// or ftp:// and should be\n"
+"                    splitted with space. If there is argument specifing a file with links in command\n"
+"                    line, then you may omit links in the command line."
+msgstr ""
+"\n"
+"            Програма призначена для паралельного скачювання файлів з кількох дзеркал.\n"
+"            Підтримувані протоколи: HTTP, HTTPS, FTP. \n"
+"            \n"
+"            Використання:\n"
+"\n"
+"             {} [ПАРАМЕТРИ...] ПОСИЛАННЯ...\n"
+"\n"
+"            Параметри:\n"
+"\n"
+"             -h                             Вивести довідкову інформацію.\n"
+"             --help\n"
+"\n"
+"             -v                             Вивести інформацію про версію.\n"
+"             --version\n"
+"\n"
+"             -b розмір_блока                Задає розмір блоків, запитуваних у дзеркал. За\n"
+"             --block-size=розмір_блока      замовчанням дорівнює 4МБ. Значення може бути \n"
+"                                            вказано в байтах, кілобайтах або мегабайтах. \n"
+"                                            Для цього необхідно після числа додати символ \n"
+"                                            K або M.\n"
+"\n"
+"             -T час_очікування              Задає час очікування відповіді сервера в\n"
+"             --timeout=час_очікування       секундах. За замовчанная дорівнює 10 сек.\n"
+"\n"
+"             -o ім'я_файла                  Задає ім'я файла, в який буде збережено дані.\n"
+"             --out-file=ім'я_файла          За замовчанная використовується ім'я файла на\n"
+"                                            сервері. Якщо ім'я файла визначити неможливо,\n"
+"                                            выкористовується ім'я out.\n"
+"\n"
+"             -u ім'я_файла                  Задає файл з переліком посилань, де кожне\n"
+"             --urls-file=ім'я_файла         посилання розміщується на окремому рядку.\n"
+"                                            Посилання з цього файла додаються до посилань\n"
+"                                            із командного рядка.\n"
+"\n"
+"            Посилання мають починатися з вказанная протоколу http://, https:// або ftp:// і\n"
+"            перелічуватись через пробіл. Якщо в параметрах вказано файл з переліком\n"
+"            посилань, то в командному рядку посилання можна не вказувати.   "
+
+#: pymget/command_line.py:96 pymget/command_line.py:105
+#: pymget/command_line.py:116
+msgid "wrong argument in the command line. Wrong parameter format of argument '{}': {}"
+msgstr "помилковий аргумент командного рядка. Помилковий формат параметра '{}': {}"
+
+#: pymget/command_line.py:135
+msgid "file '{}' not found."
+msgstr "файл '{}' не знайдено."
+
+#: pymget/command_line.py:137
+msgid "unable to read links file '{}'. Permission denied."
+msgstr "неможливо прочитати перелік посилань '{}'. Відмовлено в доступі."
+
+#: pymget/command_line.py:139
+msgid "unable to read links file '{}'. File is broken."
+msgstr "неможливо прочитати перелік посилань '{}'. Файл пошкоджено."
+
+#: pymget/command_line.py:204
+msgid "unknown argument: '{}'"
+msgstr "невідомий аргумент: '{}'"
+
+#: pymget/console.py:51 pymget/utils.py:68
+msgid "s"
+msgstr "с"
+
+#: pymget/console.py:153
+msgid "Error: "
+msgstr "Помилка: "
+
+#: pymget/console.py:165
+msgid "Warning: "
+msgstr "Увага: "
+
+#: pymget/console.py:177 pymget/console.py:181 pymget/console.py:184
+msgid "yes"
+msgstr "так"
+
+#: pymget/console.py:178 pymget/console.py:182 pymget/console.py:185
+msgid "no"
+msgstr "ні"
+
+#: pymget/manager.py:56
+msgid "There are no mirrors to download."
+msgstr "немає дзеркал для скачування."
+
+#: pymget/manager.py:92
+msgid "unable to determine filename on the mirror {}"
+msgstr "неможливо визначити ім'я файла на дзеркалі {}"
+
+#: pymget/manager.py:94 pymget/manager.py:102
+msgid "Use the mirror {} anyway?"
+msgstr "Все рівно використовувати дзеркало {}?"
+
+#: pymget/manager.py:100
+msgid "filename on the server {} differs with {}. Probably that's another file."
+msgstr "ім'я файла на дзеркалі {} відрізняється від {}. Можливо, це інший файл."
+
+#: pymget/manager.py:164 pymget/outfile.py:78 pymget/outfile.py:104
+#: pymget/outfile.py:122
+msgid "Operation has been cancelled by user."
+msgstr "Операцію скасовано користувачем."
+
+#: pymget/manager.py:221
+msgid ""
+"\n"
+"Downloading file {} {} bytes ({}):\n"
+msgstr ""
+"\n"
+"Отримання файла {} {} байт ({}):\n"
+
+#: pymget/manager.py:225
+msgid "size of the file on the server {} {} bytes differs with received before {} bytes."
+msgstr "розмір файла на сервері {} {} байт відрізняється від отриманого раніше {} байт."
+
+#: pymget/manager.py:245
+msgid "Redirect from mirror {} to address {}:"
+msgstr "Переадресування з дзеркала {} на адресу {}"
+
+#: pymget/manager.py:256
+msgid "unable to connect to the server {}"
+msgstr "не вдалося з'єднатися з сервером {}"
+
+#: pymget/manager.py:258
+msgid "server {} does not support partial downloading."
+msgstr "сервер {} не підтримує скачування частинами."
+
+#: pymget/manager.py:260
+msgid "wrong server response. Code {}"
+msgstr "помилкова відповідь сервера. Код {}"
+
+#: pymget/manager.py:264
+msgid "unable to download the file."
+msgstr "неможливо скачати файл."
+
+#: pymget/mirrors.py:134
+msgid "Connecting to {} OK"
+msgstr "З'єднання із {} OK"
+
+#: pymget/outfile.py:76
+msgid "Directory {} does not exist. Do you want to create that?"
+msgstr "Папка {} не існує. Створити папку?"
+
+#: pymget/outfile.py:83
+msgid "wrong path, '{}' is a file."
+msgstr "помилковий шлях, '{}' є файлом."
+
+#: pymget/outfile.py:86
+msgid "unable to create directory '{}': permission denied."
+msgstr "не вдалося створити папку '{}': відмовлено в доступі."
+
+#: pymget/outfile.py:102
+msgid "File {} already exists. Do you really want to rewrite that? All data will be lost."
+msgstr "Файл {} вже існує. Ви дійсно бажаєте перезаписати файл? Всі дані буде втрачено."
+
+#: pymget/outfile.py:110
+msgid "unable to create file '{}': permission denied."
+msgstr "не вдалося створити файл '{}': відмовлено в доступі."
+
+#: pymget/outfile.py:118
+msgid "unable to open file '{}': permission denied."
+msgstr "не вдалося відкрити файл '{}': відмовлено в доступі."
+
+#: pymget/outfile.py:120
+msgid "File {} not found. Do you want to start downloading again?"
+msgstr "Файл {} не знайдено. Почати скачування знов?"
+
+#: pymget/outfile.py:161 pymget/outfile.py:175
+msgid "Failed to write file '{}'."
+msgstr "запис в файл '{}' закінчився невдачею."
+
+#: pymget/utils.py:38
+msgid "TiB"
+msgstr "ТіБ"
+
+#: pymget/utils.py:40
+msgid "GiB"
+msgstr "ГіБ"
+
+#: pymget/utils.py:42
+msgid "MiB"
+msgstr "МіБ"
+
+#: pymget/utils.py:44
+msgid "KiB"
+msgstr "КіБ"
+
+#: pymget/utils.py:45
+msgid "B"
+msgstr "Б"
+
+#: pymget/utils.py:61
+msgid "w"
+msgstr "т"
+
+#: pymget/utils.py:63
+msgid "d"
+msgstr "д"
+
+#: pymget/utils.py:65
+msgid "h"
+msgstr "г"
+
+#: pymget/utils.py:67
+msgid "m"
+msgstr "х"
