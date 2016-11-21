@@ -3,12 +3,12 @@
 
 import sys
 
-from pymget.errors import CancelError
-from pymget.console import Console
-from pymget.manager import Manager
-from pymget.networking import VERSION
-from pymget.command_line import CommandLine
-from pymget.outfile import OutputFile
+from . import __version__
+from .errors import CancelError
+from .console import Console
+from .manager import Manager
+from .command_line import CommandLine
+from .outfile import OutputFile
 
 class PyMGet:
 
@@ -20,7 +20,7 @@ class PyMGet:
         self.argv = argv
         self.manager = self._manager() # create a manager object
         self.console = self._console() # create the Console object
-        self.console.message('\nPyMGet v{}\n'.format(VERSION)) # print an information about program
+        self.console.message('\nPyMGet v{}\n'.format(__version__)) # print an information about program
 
     def run(self):
 

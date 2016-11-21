@@ -2,15 +2,16 @@
 # -*- coding: utf-8 -*-
 
 
-import os, queue
+import os
+import queue
 from collections import deque
 from abc import ABCMeta, abstractmethod
 
-import pymget.messages
-from pymget.errors import FatalError, CancelError
-from pymget.utils import calc_size
-from pymget.mirrors import Mirror
-from pymget.data_queue import DataQueue
+from . import messages
+from .errors import FatalError, CancelError
+from .utils import calc_size
+from .mirrors import Mirror
+from .data_queue import DataQueue
 
 class IManager(metaclass=ABCMeta):
 

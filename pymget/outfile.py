@@ -5,8 +5,8 @@ import os
 import struct
 from abc import ABCMeta, abstractmethod
 
-import pymget.messages
-from pymget.errors import FileError, CancelError
+from . import messages
+from .errors import FileError, CancelError
 
 # Output file class
 

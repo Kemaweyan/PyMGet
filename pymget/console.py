@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import sys, time
+import time
 from abc import ABCMeta, abstractmethod
 
-import pymget.messages
-from pymget.utils import *
+from . import messages
+from .utils import *
 
 class IProgressBar(metaclass=ABCMeta):
 
@@ -105,7 +105,7 @@ class ProgressBar(IProgressBar):
         speed_str = '{0:>10}/{1}'.format(calc_size(speed), _("s"))
         eta_str = '{0:>9}'.format(calc_eta(eta))
 
-        return '{0} {1} {2} {3}\r'.format(progress_str, percentage_str, speed_str, eta_str)
+        return '{0} {1} {2} {3}'.format(progress_str, percentage_str, speed_str, eta_str)
 
     def update(self, complete):
 
@@ -119,8 +119,7 @@ class ProgressBar(IProgressBar):
         bar = self._update(complete)
 
         # write the string to standard output
-        sys.stdout.write(bar)
-        sys.stdout.flush()
+        print(bar, end='\r', flush=True)
 
     @property
     def time(self):

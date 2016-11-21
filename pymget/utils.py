@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import pymget.messages
+from . import messages
 
 def singleton(cls):
 

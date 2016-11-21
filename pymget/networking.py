@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import re, platform
+import re
+import platform
 import threading
 from http import client
 import ftplib
 from abc import ABCMeta, abstractmethod, abstractproperty
 
-from pymget.task_info import *
-from pymget.data_queue import DataQueue
+from . import __version__
+from .task_info import *
+from .data_queue import DataQueue
 
 VERSION = '1.40'
 
@@ -18,7 +20,7 @@ class URL:
     Parses url string. Supported protocols: HTTP/HTTPS/FTP
 
     """
-    url_re = re.compile('^(https?|ftp)://([\d\w\.-]+(?::\d+)?)((?:/(.+?))?/([^\/]+)?)?$', re.I)
+    url_re = re.compile('^(https?|ftp)://([\w\.-]+(?::\d+)?)((?:/(.+?))?/([^\/]+)?)?$', re.I)
 
     def __init__(self, url):
 
@@ -64,7 +66,7 @@ class NetworkThread(threading.Thread, INetworkThread):
 
     """
     # user_agent string for HTTP(S) servers
-    user_agent = 'PyMGet/{} ({} {}, {})'.format(VERSION, platform.uname().system, platform.uname().machine, platform.uname().release)
+    user_agent = 'PyMGet/{} ({} {}, {})'.format(__version__, platform.uname().system, platform.uname().machine, platform.uname().release)
 
     def __init__(self):
         threading.Thread.__init__(self)

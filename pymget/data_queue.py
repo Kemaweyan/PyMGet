@@ -4,7 +4,7 @@
 import queue
 from abc import ABCMeta, abstractmethod
 
-from pymget.utils import singleton
+from .utils import singleton
 
 class IDataQueue:
     """

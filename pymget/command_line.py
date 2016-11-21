@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import sys, os
-import re, textwrap
+import sys
+import os
+import re
+import textwrap
 from abc import ABCMeta, abstractmethod
 
-import pymget.messages
-from pymget.networking import URL
-from pymget.errors import CommandLineError
+from . import messages
+from .networking import URL
+from .errors import CommandLineError
 
 class ICommandLine(metaclass=ABCMeta):
 

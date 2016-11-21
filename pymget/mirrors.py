@@ -3,8 +3,8 @@
 
 from abc import ABCMeta, abstractproperty, abstractmethod
 
-import pymget.messages
-from pymget.networking import *
+from . import messages
+from .networking import *
 
 class IMirror(metaclass=ABCMeta):
 
