@@ -5,7 +5,7 @@ from msgfmt import Msgfmt
 from setuptools import setup, find_packages
 from distutils.command.build import build as _build
 from distutils import cmd
-from pymget.networking import VERSION
+import pymget
 
 class build_translations(cmd.Command):
     description = 'Compiles .pot files impto .mo'
@@ -67,7 +67,7 @@ entry_points = {
 
 setup(
     name = "pymget",
-    version = VERSION,
+    version = pymget.__version__,
     fullname = "PyMGet",
     description = "Utility for parallel downloading files from multiple mirrors",
     author = "Taras Gaidukov",
