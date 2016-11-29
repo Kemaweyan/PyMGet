@@ -73,12 +73,12 @@ setup(
     author = "Taras Gaidukov",
     author_email = "kemaweyan@gmail.com",
     keywords = "downloading mirros parallel",
-    long_description = """The program is designed for parallel download files from multiple mirrors.
-                        Supported protocols: HTTP, HTTPS, FTP.""",
+    long_description = open('README').read(),
     url = "http://pymget.sourceforge.net/",
     license = "GPLv3",
     cmdclass = cmdclass,
     package_data = {"pymget": ["i18n/*/LC_MESSAGES/*.mo"]},
     packages=find_packages(),
-    entry_points = entry_points
+    entry_points=entry_points,
+    test_suite='tests'
 )

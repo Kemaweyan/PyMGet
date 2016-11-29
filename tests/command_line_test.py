@@ -1,25 +1,14 @@
 import unittest
-import os, platform
+from unittest.mock import Mock, MagicMock, patch
 
-from dummy_objects import DummyConsole
 from pymget.command_line import CommandLine
 from pymget.errors import CommandLineError
-import pymget.console
-
-TMPDIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'tmp')
-
-def setUpModule():
-    os.mkdir(TMPDIR)
-
-def tearDownModule():
-    os.rmdir(TMPDIR)
 
 class TestCommandLine(unittest.TestCase):
 
     def setUp(self):
-        self.console = DummyConsole()
+        self.console = Mock()
         self.cl = CommandLine(self.console, ['test'])
-        self.urls_file = os.path.join(TMPDIR, 'urls.txt')
 
     def test_block_size_parser_with_number(self):
         self.cl.parse_block_size('123')
@@ -64,42 +53,24 @@ class TestCommandLine(unittest.TestCase):
     def test_long_arg_parser(self):
         self.assertEqual(self.cl.parse_long_arg('--block-size=5'), '5')
 
-    def test_urls_file_parser_not_found(self):
+    @patch('builtins.open', side_effect=FileNotFoundError())
+    def test_urls_file_parser_not_found(self, open_mock):
         with self.assertRaises(CommandLineError):
-            self.cl.parse_urls_file(self.urls_file)
+            self.cl.parse_urls_file('')
+
+    @patch('builtins.open', side_effect=PermissionError())
+    def test_urls_file_parser_permission_denied(self, open_mock):
+        with self.assertRaises(CommandLineError):
+            self.cl.parse_urls_file('')
 
     def test_urls_file_parser_ok(self):
         links = ['http://server.com\n', 'http://server.net\n']
-        with open(self.urls_file, 'w') as f:
-            f.writelines(links)
-        self.cl.parse_urls_file(self.urls_file)
-        for url in map(lambda t: t.strip('\r\n'), links):
-            self.assertIn(url, self.cl.urls)
-        os.remove(self.urls_file)
-
-    def test_urls_file_parser_permission_denied(self):
-        if platform.uname().system == 'Windows':
-            return
-        with open(self.urls_file, 'w'): pass
-        os.chmod(self.urls_file, 0)
-        with self.assertRaises(CommandLineError):
-            self.cl.parse_urls_file(self.urls_file)
-        os.remove(self.urls_file)
-
-    def test_urls_file_parser_non_unicode(self):
-        with open(self.urls_file, 'wb') as f:
-            f.write(b'\xff\xd8\xff\xe1\x1e\x00\x00\x00\x34\xab\x02')
-        with self.assertRaises(CommandLineError):
-            self.cl.parse_urls_file(self.urls_file)
-        os.remove(self.urls_file)
-
-    def test_parser_correct_urls(self):
-        args = ['test', 'http://server.com', 'https://server.net', 'ftp://server.org']
-        cl = CommandLine(self.console, args)
-        cl.parse()
-        urls = list(map(lambda u: u.url, cl.urls))
-        for url in args[1:]:
-            self.assertIn(url, urls)
+        url_file_mock = MagicMock()
+        url_file_mock.__enter__.return_value = links
+        with patch('builtins.open', return_value=url_file_mock):
+            self.cl.parse_urls_file('')
+            for url in map(lambda t: t.strip('\r\n'), links):
+                self.assertIn(url, self.cl.urls)
 
     def test_parser_wrong_urls(self):
         args = ['test', 'server.com', 'htt://server.org']
@@ -110,16 +81,16 @@ class TestCommandLine(unittest.TestCase):
 
     def test_urls_file_parser_with_urls_in_command_line(self):
         links = ['http://server.com\n', 'https://server.net\n']
-        args = ['test', '-u', self.urls_file, 'ftp://server.org']
-        with open(self.urls_file, 'w') as f:
-            f.writelines(links)
+        args = ['test', '-u', '', 'ftp://server.org']
+        url_file_mock = MagicMock()
+        url_file_mock.__enter__.return_value = links
         cl = CommandLine(self.console, args)
-        cl.parse()
+        with patch('builtins.open', return_value=url_file_mock):
+            cl.parse()
         links.extend(args[-1:])
         urls = list(map(lambda u: u.url, cl.urls))
         for url in map(lambda t: t.strip('\r\n'), links):
             self.assertIn(url, urls)
-        os.remove(self.urls_file)
 
     def test_parser_block_size_short_argument(self):
         args = ['test', '-b', '100']
@@ -159,24 +130,24 @@ class TestCommandLine(unittest.TestCase):
 
     def test_parser_urls_file_short_argument(self):
         links = ['http://server.com\n', 'http://server.net\n']
-        with open(self.urls_file, 'w') as f:
-            f.writelines(links)
-        args = ['test', '-u', self.urls_file]
+        args = ['test', '-u', '']
+        url_file_mock = MagicMock()
+        url_file_mock.__enter__.return_value = links
         cl = CommandLine(self.console, args)
-        cl.parse()
+        with patch('builtins.open', return_value=url_file_mock):
+            cl.parse()
         urls = list(map(lambda u: u.url, cl.urls))
         for url in map(lambda t: t.strip('\r\n'), links):
             self.assertIn(url, urls)
-        os.remove(self.urls_file)
 
     def test_parser_urls_file_long_argument(self):
         links = ['http://server.com\n', 'http://server.net\n']
-        with open(self.urls_file, 'w') as f:
-            f.writelines(links)
-        args = ['test', '--urls-file=' + self.urls_file]
+        args = ['test', '--urls-file=foo']
+        url_file_mock = MagicMock()
+        url_file_mock.__enter__.return_value = links
         cl = CommandLine(self.console, args)
-        cl.parse()
+        with patch('builtins.open', return_value=url_file_mock):
+            cl.parse()
         urls = list(map(lambda u: u.url, cl.urls))
         for url in map(lambda t: t.strip('\r\n'), links):
             self.assertIn(url, urls)
-        os.remove(self.urls_file)

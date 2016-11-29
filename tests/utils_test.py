@@ -28,6 +28,7 @@ class TestSingleton(unittest.TestCase):
         self.assertIs(Foo(1, bar=2), Foo(1, bar=2))
 
 
+
 class TestCalcSize(unittest.TestCase):
 
     def test_calc_size_with_bytes(self):
@@ -44,6 +45,8 @@ class TestCalcSize(unittest.TestCase):
 
     def test_calc_size_with_terabytes(self):
         self.assertEqual(calc_size(10000000000000), '9.09TiB')
+
+
 
 
 class TestCalcEta(unittest.TestCase):
@@ -68,6 +71,3 @@ class TestCalcEta(unittest.TestCase):
 
     def test_calc_eta_with_more_than_99_weeks(self):
         self.assertEqual(calc_eta(59875201), ' ETA: ---')
-
-if __name__ == '__main__':
-    unittest.main()

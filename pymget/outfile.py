@@ -53,6 +53,9 @@ class OutputFile(IOutputFile):
         """
         self.console = console
         self.user_path = user_path
+        self.filename = ''
+        self.path = ''
+        self.fullpath = ''
 
     def create_path(self, filename):
 

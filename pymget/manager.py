@@ -176,6 +176,17 @@ class Manager(IManager):
             self.parts_in_progress.append(self.offset) # add the offset to the list of active parts
             self.offset += self.block_size # increase current offset
 
+    def keep_download(self):
+
+        """
+        Returns False if downloading completed.
+        Otherwise returns True.
+
+        """
+        # downloading is complete if file size is known (more than 0)
+        # and all the data is written to the output file
+        return self.file_size == 0 or self.written_bytes < self.file_size
+
     def download(self):
 
         """
@@ -184,7 +195,7 @@ class Manager(IManager):
         """
         with self.outfile: # open output file
             try:
-                while self.file_size == 0 or self.written_bytes < self.file_size: # downloading is not complete
+                while self.keep_download(): # downloading is not complete
                     self.wait_connections() # wait mirrors (connections, giving tasks)
                     while True:
                         try:
