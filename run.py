@@ -1,5 +1,5 @@
 #!/usr/bin/env python
 
-from pymget.pymget import start
+from pymget import pymget
 
-start()
+pymget.start()

@@ -203,44 +203,38 @@ class testManager(unittest.TestCase):
         self.assertNotIn(self.mirror, self.manager.mirrors)
 
     def test_do_error_not_last_mirror(self):
-        self.task_info.status = 0
         self.manager.delete_mirror = Mock()
-        self.manager.do_error(self.task_info)
+        self.manager.do_error('test', 0)
         self.manager.delete_mirror.assert_called_with('test')
 
     def test_do_error_last_mirror(self):
-        self.task_info.status = 0
         self.manager.delete_mirror = Mock()
         self.manager.mirrors = {}
         with self.assertRaises(FatalError):
-            self.manager.do_error(self.task_info)
+            self.manager.do_error('test', 0)
         self.manager.delete_mirror.assert_called_with('test')
 
     def test_redirect(self):
         url_mock = Mock()
-        self.task_info.location = url_mock
         self.manager.create_mirror = Mock()
         self.manager.delete_mirror = Mock()
-        self.manager.redirect(self.task_info)
+        self.manager.redirect('test', url_mock)
         self.manager.create_mirror.assert_called_with(url_mock)
         self.manager.delete_mirror.assert_called_with('test')
 
     def test_set_progress(self):
         mirror2 = Mock()
         mirror2.task_progress = 10
-        self.task_info.task_progress = 20
         self.manager.mirrors['test2'] = mirror2
         self.manager.written_bytes = 100
-        self.manager.set_progress(self.task_info)
+        self.manager.set_progress('test', 20)
         self.console.progress.assert_called_with(130)
 
     def test_write_data(self):
         data = b'\x00'*10
-        self.task_info.offset = 100
-        self.task_info.data = data
         self.manager.del_active_part = Mock()
         self.manager.written_bytes = 100
-        self.manager.write_data(self.task_info)
+        self.manager.write_data('test', 100, data)
         self.assertEqual(self.manager.written_bytes, 110)
         self.manager.del_active_part.assert_called_with(100)
         self.mirror.done.assert_called_with()
@@ -248,7 +242,7 @@ class testManager(unittest.TestCase):
         self.outfile.write.assert_called_with(data)
 
     def test_set_file_size_first(self):
-        self.manager.set_file_size(self.task_info)
+        self.manager.set_file_size('test', 100)
         self.assertEqual(self.manager.file_size, 100)
         self.assertEqual(self.mirror.file_size, 100)
         self.assertTrue(self.mirror.ready)
@@ -258,7 +252,7 @@ class testManager(unittest.TestCase):
 
     def test_set_file_size_equals(self):
         self.manager.file_size = 100
-        self.manager.set_file_size(self.task_info)
+        self.manager.set_file_size('test', 100)
         self.assertEqual(self.mirror.file_size, 100)
         self.assertTrue(self.mirror.ready)
         self.mirror.connect_message.assert_called_with(self.console)
@@ -266,6 +260,6 @@ class testManager(unittest.TestCase):
     def test_set_file_size_differs(self):
         self.manager.file_size = 200
         self.manager.delete_mirror = Mock()
-        self.manager.set_file_size(self.task_info)
+        self.manager.set_file_size('test', 100)
         self.assertEqual(self.manager.file_size, 200)
         self.manager.delete_mirror.assert_called_with('test')

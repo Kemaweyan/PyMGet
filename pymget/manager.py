@@ -230,7 +230,7 @@ class Manager(IManager):
         """
         Deletes an active task from the list.
 
-        :offset: the offset of the part, type int
+        :offset: an offset of the part, type int
 
         """
         self.parts_in_progress.remove(offset)
@@ -240,7 +240,7 @@ class Manager(IManager):
         """
         Adds failed task in the list.
 
-        :offset: the offset of the part, type int
+        :offset: an offset of the part, type int
 
         """
         self.del_active_part(offset) # failed task is inactive
@@ -251,84 +251,87 @@ class Manager(IManager):
         """
         Deleten a mirror.
 
-        :name: name of the mirror, type str
+        :name: a name of the mirror, type str
 
         """
         mirror = self.mirrors[name]
         mirror.join()
         del self.mirrors[name]
 
-    def set_file_size(self, task_info):
+    def set_file_size(self, name, file_size):
 
         """
         Set the size of the file at first call and allocate
         a space on HDD. At other calls compares the size
         with sizes on other mirrors.
 
-        :task_info: the task result from the queue, type TaskHeadData
+        :name: a name of the mirror that sent a TaskInfo object, type str
+        :file_size: a size of the file received from the mirror, type int
 
         """
         if self.file_size == 0: # first call (the filesize is not yet known)
-            self.file_size = task_info.file_size
+            self.file_size = file_size
             self.console.create_progressbar(self.file_size, self.old_progress)
             self.outfile.seek(self.file_size - 1) # seek to last byte
             self.outfile.write(b'\x00') # write zero
             downloading_msg = _("\nDownloading file {} {} bytes ({}):\n").format(self.outfile.filename, self.file_size, calc_size(self.file_size))
             self.console.message(downloading_msg)
-        elif self.file_size != task_info.file_size: # call is not the first and the size differs
+        elif self.file_size != file_size: # call is not the first and the size differs
             # the file is broken or it's another file
-            self.console.error(_("size of the file on the server {} {} bytes differs with received before {} bytes.").format(task_info.name, \
-                    task_info.file_size, self.file_size))
-            self.delete_mirror(task_info.name) # delete the mirror
+            self.console.error(_("size of the file on the server {} {} bytes differs with received before {} bytes.").format(name, file_size, self.file_size))
+            self.delete_mirror(name) # delete the mirror
             return
-        mirror = self.mirrors[task_info.name]
-        mirror.file_size = task_info.file_size # save the filename in the mirror
+        mirror = self.mirrors[name]
+        mirror.file_size = file_size # save the filename in the mirror
         mirror.ready = True # mark the mirror as ready to download a part
         mirror.connect_message(self.console) # print connection message
 
-    def redirect(self, task_info):
+    def redirect(self, name, location):
 
         """
         Removes the mirror and creates a new one
         with new addres from redirect info.
 
-        :task_info: the task result from the queue, type TaskRedirect
+        :name: a name of the mirror that sent a TaskInfo object, type str
+        :location: a new location of the file for redirect, type networking.URL
 
         """
-        self.delete_mirror(task_info.name)
-        self.create_mirror(task_info.location)
-        self.console.message(_("Redirect from mirror {} to address {}:").format(task_info.name, task_info.location.url))
+        self.delete_mirror(name)
+        self.create_mirror(location)
+        self.console.message(_("Redirect from mirror {} to address {}:").format(name, location.url))
 
-    def do_error(self, task_info):
+    def do_error(self, name, status):
 
         """
         Executes if an error has occurred.
 
-        :task_info: the task result from the queue, type TaskError
+        :name: a name of the mirror that sent a TaskInfo object, type str
+        :status: a status code of the error, type int
 
         """
-        if task_info.status == 0: # connection error
-            self.console.error(_("unable to connect to the server {}").format(task_info.name))
-        elif task_info.status == 200: # the mirror does not support partial downlaod
-            self.console.error(_("server {} does not support partial downloading.").fotmat(task_info.name))
+        if status == 0: # connection error
+            self.console.error(_("unable to connect to the server {}").format(name))
+        elif status == 200: # the mirror does not support partial downlaod
+            self.console.error(_("server {} does not support partial downloading.").fotmat(tname))
         else: # another error (probably HTTP 4xx/5xx)
-            self.console.error(_("wrong server response. Code {}").format(task_info.status))
-        self.delete_mirror(task_info.name) # delete the mirror
+            self.console.error(_("wrong server response. Code {}").format(status))
+        self.delete_mirror(name) # delete the mirror
         if not self.mirrors: # if no mirror remains
             # downloading impossible, quit program
             raise FatalError(_("unable to download the file."))
 
-    def set_progress(self, task_info):
+    def set_progress(self, name, task_progress):
 
         """
         Updates the progress of downloading.
 
-        :task_info: the task result from the queue, type TaskProgress
+        :name: a name of the mirror that sent a TaskInfo object, type str
+        :task_progress: a progress of current task given to the mirror, type int
 
         """
         # update the progress of the mirror
-        mirror = self.mirrors[task_info.name]
-        mirror.task_progress = task_info.task_progress
+        mirror = self.mirrors[name]
+        mirror.task_progress = task_progress
         # progress is written data + current progress of
         # active tasks
         progress = self.written_bytes + sum(map(lambda m: m.task_progress, self.mirrors.values()))
@@ -336,19 +339,21 @@ class Manager(IManager):
         # pass the progress of current session
         self.console.progress(progress)
 
-    def write_data(self, task_info):
+    def write_data(self, name, offset, data):
 
         """
         Writes data to the file, release the mirror.
 
-        :task_info: the task result from the queue, type TaskData
+        :name: a name of the mirror that sent a TaskInfo object, type str
+        :offset: an offset of data part gotten from the mirror, type int
+        :data: data of the task given to the mirror, type bytes
 
         """
-        self.del_active_part(task_info.offset) # the task becomes inactive
-        self.outfile.seek(task_info.offset) # seek to offset of the task
-        self.outfile.write(task_info.data) # write data
-        self.written_bytes += len(task_info.data) # increase the written bytes count
-        mirror = self.mirrors[task_info.name]
+        self.del_active_part(offset) # the task becomes inactive
+        self.outfile.seek(offset) # seek to offset of the task
+        self.outfile.write(data) # write data
+        self.written_bytes += len(data) # increase the written bytes count
+        mirror = self.mirrors[name]
         mirror.done() # mark the mirror as completed downloading
 
     @property

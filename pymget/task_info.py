@@ -53,7 +53,7 @@ class TaskHeadData(TaskInfo):
         Executes when connection to server succed.
 
         """
-        manager.set_file_size(self) # tell file size to the Manager
+        manager.set_file_size(self.name, self.file_size) # tell file size to the Manager
 
 class TaskRedirect(TaskInfo):
 
@@ -78,7 +78,7 @@ class TaskRedirect(TaskInfo):
         Executes when server redirects request.
 
         """
-        manager.redirect(self) # do redirect
+        manager.redirect(self.name, self.location) # do redirect
 
 class TaskProgress(TaskInfo):
 
@@ -103,7 +103,7 @@ class TaskProgress(TaskInfo):
         Sets the progress of current task.
 
         """
-        manager.set_progress(self)
+        manager.set_progress(self.name, self.task_progress)
 
 class TaskHeadError(TaskInfo):
 
@@ -117,7 +117,7 @@ class TaskHeadError(TaskInfo):
         Executes when a connection error has occurred.
 
         """
-        manager.do_error(self) # process an error
+        manager.do_error(self.name, self.status) # process an error
 
 class TaskError(TaskHeadError):
 
@@ -169,4 +169,4 @@ class TaskData(TaskError):
         Executes when the task successfully completed.
 
         """
-        manager.write_data(self) # write data
+        manager.write_data(self.name, self.offset, self.data) # write data
