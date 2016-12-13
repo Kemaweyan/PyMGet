@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import os
-from msgfmt import Msgfmt
+from pythongettext.msgfmt import Msgfmt
 from setuptools import setup, find_packages
 from distutils.command.build import build as _build
 from distutils import cmd
@@ -63,8 +63,6 @@ entry_points = {
     ]
 }
 
-
-
 setup(
     name = "pymget",
     version = pymget.__version__,
@@ -78,7 +76,8 @@ setup(
     license = "GPLv3",
     cmdclass = cmdclass,
     package_data = {"pymget": ["i18n/*/LC_MESSAGES/*.mo"]},
-    packages=find_packages(),
+    packages=find_packages(exclude=["tests"]),
     entry_points=entry_points,
-    test_suite='tests'
+    test_suite='tests',
+    install_requires=['python-gettext>=3.0']
 )
