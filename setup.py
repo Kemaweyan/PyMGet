@@ -72,7 +72,7 @@ setup(
     author_email = "kemaweyan@gmail.com",
     keywords = "downloading mirros parallel",
     long_description = open('README').read(),
-    url = "http://pymget.sourceforge.net/",
+    url = "https://github.com/Kemaweyan/PyMGet",
     license = "GPLv3",
     cmdclass = cmdclass,
     package_data = {"pymget": ["i18n/*/LC_MESSAGES/*.mo"]},
